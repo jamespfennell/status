@@ -1,0 +1,19 @@
+hostname: status.a.jamesfennell.dev
+
+checks:
+- name: subwaydata.nyc
+  url: https://subwaydata.nyc
+- name: hoard2.subwaydata.nyc
+  url: https://hoard2.subwaydata.nyc
+  view: history
+- name: rollouts.jamesfennell.dev
+  url: https://rollouts.jamesfennell.dev
+  contains: Rollouts
+- name: status.b.jamesfennell.dev
+  url: https://status.b.jamesfennell.dev/status.json
+
+# Optional. Without it, emails are logged but not sent.
+# email_config:
+#   smtp_url: smtps://username:password@smtp.example.com
+#   to: james@jpfennell.com
+#   from: Status agent <status@a.jamesfennell.dev>

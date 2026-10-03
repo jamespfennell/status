@@ -1,0 +1,730 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Status</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: system-ui, -apple-system, sans-serif;
+  background: #f5f5f5;
+  color: #1a1a1a;
+  font-size: 15px;
+  line-height: 1.5;
+}
+
+a { color: #2563eb; text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+.container {
+  max-width: 800px;
+  margin: 0 auto;
+  padding: 32px 16px;
+}
+
+.site-header {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 32px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid #ddd;
+}
+.site-header h1 { font-size: 1.1rem; font-weight: 600; }
+.site-header h1 a { color: inherit; }
+.site-header .hostname { color: #666; font-size: 0.875rem; }
+
+.breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.875rem;
+  margin-bottom: 20px;
+  color: #555;
+}
+.breadcrumb a { color: #555; }
+.breadcrumb a:hover { color: #1a1a1a; text-decoration: underline; }
+.breadcrumb .sep { color: #bbb; }
+
+.page-title { font-size: 1.4rem; font-weight: 700; margin-bottom: 4px; overflow-wrap: anywhere; }
+.page-subtitle { color: #444; font-size: 0.9rem; margin-bottom: 24px; overflow-wrap: anywhere; }
+
+.section-label {
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #777;
+  margin-bottom: 8px;
+}
+.section { margin-top: 24px; }
+
+.badge {
+  display: inline-block;
+  font-size: 0.7rem;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 99px;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+.badge-green  { background: #dcfce7; color: #15803d; }
+.badge-red    { background: #fee2e2; color: #b91c1c; }
+.badge-orange { background: #ffedd5; color: #c2410c; }
+.badge-gray   { background: #f3f4f6; color: #6b7280; }
+
+.card {
+  background: white;
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  overflow: hidden;
+}
+.card + .card { margin-top: 10px; }
+
+.banner {
+  border-radius: 8px;
+  padding: 14px 18px;
+  margin-bottom: 24px;
+  font-weight: 600;
+}
+.banner-green { background: #dcfce7; border: 1px solid #86efac; color: #15803d; }
+.banner-red   { background: #fee2e2; border: 1px solid #fca5a5; color: #991b1b; }
+.banner-gray  { background: #f3f4f6; border: 1px solid #ddd; color: #555; }
+.banner-meta  { font-weight: 400; font-size: 0.85rem; margin-top: 2px; }
+.load-error {
+  background: #fee2e2;
+  border: 1px solid #fca5a5;
+  border-radius: 8px;
+  padding: 12px 16px;
+  margin-bottom: 10px;
+  font-size: 0.875rem;
+  color: #991b1b;
+}
+
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 4px 16px;
+  margin-bottom: 8px;
+}
+.controls .section-label { margin-bottom: 0; }
+.toggles { display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: 0.75rem; color: #666; }
+.toggle { cursor: pointer; }
+.toggle.active { font-weight: 700; color: #333; }
+#filter {
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  font-size: 0.9rem;
+  margin-bottom: 12px;
+  outline: none;
+}
+
+/* Checks on the overview, stacked in a single card */
+a.check { display: block; color: inherit; border-top: 1px solid #eee; padding: 10px 16px; }
+a.check:first-child { border-top: none; }
+a.check:hover { text-decoration: none; background: #fafafa; }
+.check-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.check-row .badge { flex-shrink: 0; }
+.check-name { font-weight: 500; overflow-wrap: anywhere; min-width: 0; }
+.check-history { margin-top: 8px; }
+
+/* Uptime history */
+.ticks { display: flex; gap: 2px; height: 28px; }
+.tick { flex: 1; border-radius: 2px; min-width: 0; }
+.tick-green  { background: #22c55e; }
+.tick-orange { background: #f59e0b; }
+.tick-red    { background: #ef4444; }
+.tick-gray   { background: #e5e7eb; }
+.ticks-legend {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.75rem;
+  color: #777;
+  margin-top: 4px;
+}
+.short-range { display: none; }
+@media (max-width: 600px) {
+  .tick:nth-child(-n+60) { display: none; }
+  .long-range { display: none; }
+  .short-range { display: inline; }
+}
+
+/* Rows */
+.row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 18px;
+  border-top: 1px solid #eee;
+}
+.row:first-child { border-top: none; }
+.row-left { flex: 1; min-width: 0; }
+.row-title { font-weight: 500; overflow-wrap: anywhere; }
+.row-meta { font-size: 0.85rem; color: #555; margin-top: 2px; overflow-wrap: anywhere; }
+.empty { padding: 14px 18px; color: #666; }
+
+/* Recent checks chart: one fixed-width slot per poll interval, height is the response time */
+.latency { position: relative; }
+.latency-summary { font-size: 0.85rem; color: #555; margin-bottom: 10px; }
+.latency-plot { display: flex; gap: 6px; }
+.latency-axis {
+  position: relative;
+  font-size: 0.7rem;
+  line-height: 1;
+  color: #777;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  height: 80px;
+}
+/* Each label is centred on its gridline; the invisible copy sets the column width. */
+.latency-axis span { position: absolute; right: 0; transform: translateY(-50%); white-space: nowrap; }
+.latency-axis .sizer { position: static; visibility: hidden; transform: none; }
+.latency-area { position: relative; flex: 1; min-width: 0; }
+/* Horizontal gridlines and the axis lines; these stay fixed while the bars scroll over them. */
+.latency-grid {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 80px;
+  border-left: 1px solid #bbb;
+  border-right: 1px solid #bbb;
+  border-bottom: 1px solid #bbb;
+  pointer-events: none;
+}
+.latency-grid div { position: absolute; left: 0; right: 0; border-top: 1px solid #e5e5e5; }
+.latency-scroll { position: relative; overflow-x: auto; }
+/* Right-aligned when narrower than the box, so "now" is always at the right edge. */
+.latency-content { position: relative; width: max-content; margin-left: auto; }
+/* Tick marks below the x-axis at the time labels. */
+.latency-ticks { position: absolute; top: 80px; left: 0; right: 0; height: 4px; pointer-events: none; }
+.latency-ticks div { position: absolute; top: 0; bottom: 0; border-left: 1px solid #bbb; }
+.latency-bars {
+  position: relative;
+  height: 80px;
+  display: flex;
+  align-items: flex-end;
+  gap: 1px;
+  padding-left: 1px;
+}
+.latency-slot { width: 6px; flex-shrink: 0; height: 100%; display: flex; align-items: flex-end; }
+.latency-bar { width: 100%; border-radius: 1px 1px 0 0; background: #22c55e; }
+.latency-bar.failed { background: #ef4444; }
+.latency-slot.active .latency-bar { opacity: 0.6; }
+.latency-slot.active.no-check { background: #f3f4f6; }
+.latency-times { position: relative; height: 1.4em; font-size: 0.7rem; color: #777; margin-top: 5px; }
+.latency-times span { position: absolute; transform: translateX(-50%); white-space: nowrap; }
+.latency-tooltip {
+  position: absolute;
+  margin-bottom: 6px;
+  transform: translate(-50%, -100%);
+  background: #1a1a1a;
+  color: white;
+  font-size: 0.75rem;
+  padding: 6px 8px;
+  border-radius: 6px;
+  white-space: nowrap;
+  pointer-events: none;
+  display: none;
+  z-index: 1;
+}
+.latency-tooltip .error { color: #fca5a5; white-space: normal; max-width: 260px; }
+
+.config-pre {
+  font-family: ui-monospace, monospace;
+  font-size: 0.8rem;
+  padding: 16px 18px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: #333;
+}
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="site-header">
+    <h1><a href="#">Status</a></h1>
+    <span class="hostname" id="hostname"></span>
+  </div>
+  <div id="app"></div>
+</div>
+
+<script>
+const AGENTS = __AGENTS__;
+const REFRESH_MS = 60 * 1000;
+const DAYS = 90;
+let HOSTS = []; // [{label, data, error}] — data is null if fetch failed
+let sortAlpha = false;
+let viewMode = 'default'; // 'default', 'status' or 'history'
+let filterText = '';
+
+function esc(s) {
+  if (s == null) return '';
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function durationSince(iso) {
+  if (!iso) return 'unknown';
+  const m = (Date.now() - new Date(iso)) / 60000;
+  if (m <= 1)   return 'just now';
+  if (m < 60)   return `${Math.floor(m)}m ago`;
+  if (m < 1440) return `${Math.floor(m/60)}h ago`;
+  if (m < 21600)return `${Math.floor(m/1440)}d ago`;
+  return `${Math.floor(m/10080)}w ago`;
+}
+
+function formatDuration(start, end) {
+  const s = Math.max(0, Math.round((new Date(end || Date.now()) - new Date(start)) / 1000));
+  if (s < 60)    return `${s}s`;
+  if (s < 3600)  return `${Math.floor(s/60)}m`;
+  if (s < 86400) return `${Math.floor(s/3600)}h ${Math.floor(s/60)%60}m`;
+  return `${Math.floor(s/86400)}d ${Math.floor(s/3600)%24}h`;
+}
+
+function formatTime(iso) {
+  return new Date(iso).toLocaleString(undefined, {month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'});
+}
+
+// A check that is up but has failed recently is shown as failing.
+function displayState(c) {
+  if (c.state === 'up' && c.consecutive_failures > 0) return 'failing';
+  return c.state;
+}
+
+function badge(c) {
+  switch (displayState(c)) {
+    case 'up':      return `<span class="badge badge-green">Up</span>`;
+    case 'down':    return `<span class="badge badge-red">Down</span>`;
+    case 'failing': return `<span class="badge badge-orange">Failing ${c.consecutive_failures}/${c.config.failure_threshold}</span>`;
+    default:        return `<span class="badge badge-gray">Unknown</span>`;
+  }
+}
+
+function stateMeta(c) {
+  const latest = c.results[0];
+  switch (displayState(c)) {
+    case 'up':      return `Up for ${formatDuration(c.since)}`;
+    case 'down':    return `Down for ${formatDuration(c.since)}` + (latest?.error ? ` · ${latest.error}` : '');
+    case 'failing': return `Failing for ${formatDuration(c.failing_since)}` + (latest?.error ? ` · ${latest.error}` : '');
+    default:        return latest ? `Last checked ${durationSince(latest.time)}` : 'Not checked yet';
+  }
+}
+
+const STATE_ORDER = {down: 0, failing: 1, unknown: 2, up: 3};
+
+function breadcrumb(crumbs) {
+  return `<div class="breadcrumb">${crumbs.map((c,i) =>
+    i < crumbs.length - 1
+      ? `<a href="${esc(c.href)}">${esc(c.label)}</a><span class="sep">/</span>`
+      : `<span>${esc(c.label)}</span>`
+  ).join('')}</div>`;
+}
+
+function render(html) {
+  const f = document.getElementById('filter');
+  const hadFocus = f && document.activeElement === f;
+  document.getElementById('app').innerHTML = html;
+  const g = document.getElementById('filter');
+  if (g && hadFocus) { g.focus(); g.setSelectionRange(g.value.length, g.value.length); }
+}
+
+function checkUrl(host, name) {
+  return `#/checks/${encodeURIComponent(host)}/${encodeURIComponent(name)}`;
+}
+
+// Uptime history over the last DAYS days. Days are UTC, matching the agent.
+function history(c) {
+  const byDate = {};
+  c.days.forEach(d => { byDate[d.date] = d; });
+  let checks = 0, failures = 0;
+  let ticks = '';
+  for (let i = DAYS - 1; i >= 0; i--) {
+    const date = new Date(Date.now() - i * 86400000).toISOString().slice(0, 10);
+    const label = new Date(date + 'T00:00:00Z').toLocaleDateString(undefined, {month: 'short', day: 'numeric', timeZone: 'UTC'});
+    const d = byDate[date];
+    let cls, title;
+    if (!d || d.checks === 0) {
+      cls = 'gray';
+      title = `${label}: no data`;
+    } else {
+      checks += d.checks;
+      failures += d.failures;
+      const uptime = (100 * (d.checks - d.failures) / d.checks).toFixed(2);
+      cls = d.down ? 'red' : d.failures > 0 ? 'orange' : 'green';
+      title = `${label}: ${uptime}% uptime` +
+        (d.failures ? ` (${d.failures} of ${d.checks} checks failed)` : '') +
+        (d.down ? ' · down' : '');
+    }
+    ticks += `<div class="tick tick-${cls}" title="${esc(title)}"></div>`;
+  }
+  const uptime = checks ? `${(100 * (checks - failures) / checks).toFixed(2)}% uptime` : 'No data';
+  return `<div class="ticks">${ticks}</div>
+    <div class="ticks-legend">
+      <span><span class="long-range">${DAYS} days ago</span><span class="short-range">30 days ago</span></span>
+      <span>${esc(uptime)}</span>
+      <span>Today</span>
+    </div>`;
+}
+
+// Rounds up to a clean axis maximum: 1, 2 or 5 times a power of ten.
+function niceMax(v) {
+  const p = Math.pow(10, Math.floor(Math.log10(Math.max(v, 1))));
+  return [1, 2, 5, 10].map(m => m * p).find(m => m >= v);
+}
+
+function formatMs(ms) {
+  return ms >= 1000 ? `${(ms / 1000).toFixed(ms >= 10000 ? 0 : 1)}s` : `${ms}ms`;
+}
+
+const SLOT_PX = 7;          // 6px column + 1px gap
+const MAX_SLOTS = 24 * 60;  // bounds the width if the agent was off for a long time
+const LABEL_EVERY_SECS = 15 * 60;
+let CHART_SLOTS = [];
+
+// Column chart of recent checks with one fixed-width slot per poll interval, oldest on the
+// left. Intervals with no check are left empty. Failed checks are full-height red columns.
+function latencyChart(results, intervalSecs) {
+  const interval = intervalSecs * 1000;
+  const bucket = t => Math.floor(new Date(t).getTime() / interval);
+  const last = Math.max(bucket(results[0].time), bucket(Date.now()) - 1);
+  const first = Math.max(bucket(results[results.length - 1].time), last - MAX_SLOTS + 1);
+
+  // Each slot shows one check; if there are several (e.g. the agent restarted),
+  // a failure wins, then the slowest.
+  const slots = [];
+  for (let b = first; b <= last; b++) slots.push({start: b * interval, results: []});
+  results.forEach(r => {
+    const i = bucket(r.time) - first;
+    if (i >= 0 && i < slots.length) slots[i].results.push(r);
+  });
+  slots.forEach(s => {
+    s.shown = [...s.results].sort((a, b) => (a.success - b.success) || (b.latency_ms - a.latency_ms))[0];
+  });
+
+  const shown = results.filter(r => bucket(r.time) >= first);
+  const ok = shown.filter(r => r.success).map(r => r.latency_ms).sort((a, b) => a - b);
+  const quantile = q => ok[Math.min(ok.length - 1, Math.floor(q * ok.length))];
+  const max = niceMax(ok.length ? ok[ok.length - 1] : 1);
+  const failures = shown.length - ok.length;
+  const summary = [
+    `${shown.length} checks`,
+    ok.length ? `median ${formatMs(quantile(0.5))}` : '',
+    ok.length ? `p95 ${formatMs(quantile(0.95))}` : '',
+    failures ? `${failures} failed` : 'none failed',
+  ].filter(Boolean).join(' · ');
+
+  const bars = slots.map((s, i) => {
+    const r = s.shown;
+    if (!r) return `<div class="latency-slot no-check" data-i="${i}"></div>`;
+    const height = r.success ? Math.max(2, 100 * r.latency_ms / max) : 100;
+    return `<div class="latency-slot" data-i="${i}">
+      <div class="latency-bar${r.success ? '' : ' failed'}" style="height:${height}%"></div>
+    </div>`;
+  }).join('');
+
+  // Clock times at round multiples of LABEL_EVERY_SECS, and "Now" at the right edge.
+  // Labels too close to either end are skipped so they aren't clipped and don't overlap "Now".
+  // Each label gets a tick mark, at the left edge of its slot.
+  const times = [];
+  const ticks = [];
+  slots.forEach((s, i) => {
+    if (s.start % (LABEL_EVERY_SECS * 1000) !== 0) return;
+    ticks.push(`<div style="left:${i * SLOT_PX}px"></div>`);
+    if (i * SLOT_PX >= 30 && slots.length - i > 6) {
+      const label = new Date(s.start).toLocaleTimeString(undefined, {hour: '2-digit', minute: '2-digit'});
+      times.push(`<span style="left:${i * SLOT_PX}px">${esc(label)}</span>`);
+    }
+  });
+  times.push(`<span style="right:0;transform:none">Now</span>`);
+
+  CHART_SLOTS = slots;
+  return `<div class="latency">
+    <div class="latency-summary">${esc(summary)}</div>
+    <div class="latency-tooltip" id="latency-tooltip"></div>
+    <div class="latency-plot">
+      <div class="latency-axis">
+        <span class="sizer">${formatMs(max)}</span>
+        <span style="top:0">${formatMs(max)}</span>
+        <span style="top:50%">${formatMs(max / 2)}</span>
+        <span style="top:100%">0</span>
+      </div>
+      <div class="latency-area">
+        <div class="latency-grid"><div style="top:0"></div><div style="top:50%"></div></div>
+        <div class="latency-scroll" id="latency-scroll" onscroll="latencyHover(null)">
+          <div class="latency-content">
+            <div class="latency-ticks">${ticks.join('')}</div>
+            <div class="latency-bars" id="latency-bars"
+              onpointerover="latencyHover(event)" onpointerdown="latencyHover(event)" onpointerleave="latencyHover(null)">${bars}</div>
+            <div class="latency-times">${times.join('')}</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>`;
+}
+
+function latencyHover(e) {
+  const bars = document.getElementById('latency-bars');
+  const tooltip = document.getElementById('latency-tooltip');
+  if (!bars || !tooltip) return;
+  bars.querySelectorAll('.latency-slot.active').forEach(el => el.classList.remove('active'));
+  const el = e && e.target.closest('.latency-slot');
+  if (!el) { tooltip.style.display = 'none'; return; }
+  const s = CHART_SLOTS[+el.dataset.i];
+  const r = s.shown;
+  el.classList.add('active');
+  const time = esc(formatTime(r ? r.time : s.start));
+  if (!r) {
+    tooltip.innerHTML = `<div>${time}</div><div>No check</div>`;
+  } else {
+    const more = s.results.length > 1 ? ` (+${s.results.length - 1} more)` : '';
+    tooltip.innerHTML = `<div>${time} · ${formatMs(r.latency_ms)}${more}</div>` +
+      (r.error ? `<div class="error">${esc(r.error)}</div>` : `<div>HTTP ${r.status_code}</div>`);
+  }
+  tooltip.style.display = 'block';
+  // Position above the column, kept inside the chart horizontally.
+  const container = tooltip.parentElement.getBoundingClientRect();
+  const slot = el.getBoundingClientRect();
+  const half = tooltip.offsetWidth / 2;
+  const x = slot.left + slot.width / 2 - container.left;
+  tooltip.style.left = `${Math.min(container.width - half, Math.max(half, x))}px`;
+  tooltip.style.top = `${slot.top - container.top - 6}px`;
+}
+
+// Distance the recent checks chart is scrolled from its right edge, so that it can be
+// kept across re-renders. Starts at 0, which shows the most recent checks.
+function chartScrollFromRight() {
+  const el = document.getElementById('latency-scroll');
+  return el ? el.scrollWidth - el.clientWidth - el.scrollLeft : 0;
+}
+
+function setChartScrollFromRight(d) {
+  const el = document.getElementById('latency-scroll');
+  if (el) el.scrollLeft = el.scrollWidth - el.clientWidth - d;
+}
+
+function route() {
+  const hash = location.hash.replace(/^#\/?/, '');
+  const parts = hash.split('/');
+  if (hash === 'agents') {
+    renderAgents();
+  } else if (parts[0] === 'checks' && parts.length === 3) {
+    renderCheck(decodeURIComponent(parts[1]), decodeURIComponent(parts[2]));
+  } else {
+    renderOverview();
+  }
+}
+
+function renderAgents() {
+  let html = breadcrumb([{label: 'Status', href: '#'}, {label: 'Agents'}]);
+  html += `<div class="page-title">Agents</div>`;
+  html += `<div class="page-subtitle">${HOSTS.length} configured</div>`;
+
+  html += `<div class="section-label">Agents</div>`;
+  html += `<div class="card">`;
+  [...HOSTS].sort((a, b) => a.label.localeCompare(b.label)).forEach(h => {
+    if (!h.data) {
+      html += `<div class="row">
+        <div class="row-left">
+          <div class="row-title">${esc(h.label)}</div>
+          <div class="row-meta" style="color:#b91c1c;">Failed to load: ${esc(h.error)}</div>
+        </div>
+      </div>`;
+      return;
+    }
+    const checks = h.data.checks;
+    const counts = {};
+    checks.forEach(c => { const s = displayState(c); counts[s] = (counts[s] || 0) + 1; });
+    const summary = ['up', 'failing', 'down', 'unknown']
+      .filter(s => counts[s]).map(s => `${counts[s]} ${s}`).join(' · ') || 'No checks';
+    html += `<div class="row">
+      <div class="row-left">
+        <div class="row-title"><a href="https://${esc(h.label)}">${esc(h.label)}</a></div>
+        <div class="row-meta">${checks.length} checks · ${esc(summary)} · every ${h.data.poll_interval_secs}s</div>
+      </div>
+    </div>`;
+  });
+  html += `</div>`;
+
+  render(html);
+}
+
+function setView(v) { viewMode = v; renderOverview(); }
+function setSort(alpha) { sortAlpha = alpha; renderOverview(); }
+function setFilter(v) { filterText = v; renderOverview(); }
+
+function renderOverview() {
+  let html = '';
+
+  const failed = HOSTS.filter(h => !h.data);
+  failed.forEach(h => {
+    html += `<div class="load-error">Failed to load <strong>${esc(h.label)}</strong>: ${esc(h.error)}</div>`;
+  });
+
+  const allChecks = HOSTS.filter(h => h.data)
+    .flatMap(h => h.data.checks.map(c => ({...c, _host: h.label})));
+
+  const down = allChecks.filter(c => c.state === 'down');
+  if (allChecks.length > 0) {
+    const banner = down.length > 0
+      ? `<div class="banner banner-red">${down.length} ${down.length === 1 ? 'check' : 'checks'} down
+          <div class="banner-meta">${down.map(c => esc(c.config.name)).join(', ')}</div></div>`
+      : `<div class="banner banner-green">All checks passing</div>`;
+    html += banner;
+  }
+
+  if (allChecks.length === 0 && failed.length === 0) {
+    html += '<p style="color:#666;">No checks configured.</p>';
+  } else if (allChecks.length > 0) {
+    const toggle = (label, active, onclick) =>
+      `<span class="toggle${active ? ' active' : ''}" onclick="${onclick}">${label}</span>`;
+    html += `<div class="controls">
+      <div class="section-label">Checks</div>
+      <div class="toggles">
+        <span>View:
+          ${toggle('Default', viewMode === 'default', "setView('default')")} |
+          ${toggle('Status', viewMode === 'status', "setView('status')")} |
+          ${toggle('History', viewMode === 'history', "setView('history')")}
+        </span>
+        <span>Sort:
+          ${toggle('Status', !sortAlpha, 'setSort(false)')} |
+          ${toggle('A → Z', sortAlpha, 'setSort(true)')}
+        </span>
+      </div>
+    </div>
+    <input id="filter" type="text" placeholder="Filter checks…" value="${esc(filterText)}"
+      oninput="setFilter(this.value)">`;
+
+    const q = filterText.toLowerCase();
+    const byName = (a, b) => a.config.name.localeCompare(b.config.name);
+    const visible = allChecks
+      .filter(c => c.config.name.toLowerCase().includes(q)
+               || c.config.url.toLowerCase().includes(q)
+               || c._host.toLowerCase().includes(q))
+      .sort(sortAlpha
+        ? byName
+        : (a, b) => STATE_ORDER[displayState(a)] - STATE_ORDER[displayState(b)] || byName(a, b));
+
+    if (visible.length === 0) {
+      html += `<p style="color:#666;">No checks match.</p>`;
+    }
+    if (visible.length > 0) {
+      html += `<div class="card">${visible.map(c => {
+        const view = viewMode === 'default' ? c.config.view : viewMode;
+        return `<a class="check" href="${esc(checkUrl(c._host, c.config.name))}">
+          <div class="check-row">
+            <div class="check-name">${esc(c.config.name)}</div>
+            ${badge(c)}
+          </div>
+          ${view === 'history' ? `<div class="check-history">${history(c)}</div>` : ''}
+        </a>`;
+      }).join('')}</div>`;
+    }
+  }
+
+  render(html);
+}
+
+function renderCheck(hostLabel, name) {
+  const host = HOSTS.find(h => h.label === hostLabel);
+  if (!host?.data) { renderOverview(); return; }
+  const c = host.data.checks.find(c => c.config.name === name);
+  if (!c) { renderOverview(); return; }
+
+  let html = breadcrumb([{label: 'Status', href: '#'}, {label: name}]);
+
+  html += `<div class="page-title">${esc(c.config.name)}</div>
+  <div class="page-subtitle">
+    ${badge(c)} &nbsp;${esc(stateMeta(c))}<br>
+    <a href="${esc(c.config.url)}">${esc(c.config.url)}</a><br>
+    Checked from <a href="https://${esc(hostLabel)}">${esc(hostLabel)}</a> every ${host.data.poll_interval_secs}s
+  </div>`;
+
+  html += `<div class="section-label">Uptime</div>
+    <div class="card" style="padding:14px 18px;">${history(c)}</div>`;
+
+  html += `<div class="section"><div class="section-label">Incidents</div>`;
+  if (c.incidents.length === 0) {
+    html += `<div class="card empty">No incidents.</div>`;
+  } else {
+    html += `<div class="card">${c.incidents.map(i => `
+      <div class="row">
+        <div>${i.end ? '<span class="badge badge-gray">Resolved</span>' : '<span class="badge badge-red">Ongoing</span>'}</div>
+        <div class="row-left">
+          <div class="row-title">${esc(i.error)}</div>
+          <div class="row-meta">${esc(formatTime(i.start))} · down for ${esc(formatDuration(i.start, i.end))}</div>
+        </div>
+      </div>`).join('')}</div>`;
+  }
+  html += `</div>`;
+
+  html += `<div class="section"><div class="section-label">Recent checks</div>`;
+  if (c.results.length === 0) {
+    html += `<div class="card empty">Not checked yet.</div>`;
+  } else {
+    html += `<div class="card" style="padding:14px 18px;overflow:visible;">${latencyChart(c.results, host.data.poll_interval_secs)}</div>`;
+  }
+  html += `</div>`;
+
+  html += `<div class="section">
+    <div class="section-label">Configuration</div>
+    <div class="card">
+      <pre class="config-pre">${esc(JSON.stringify(c.config, null, 2))}</pre>
+    </div>
+  </div>`;
+
+  const scroll = chartScrollFromRight();
+  render(html);
+  setChartScrollFromRight(scroll);
+}
+
+window.addEventListener('hashchange', route);
+
+async function fetchHost(hostStr) {
+  const baseUrl = hostStr && !hostStr.includes('://') ? `https://${hostStr}` : hostStr;
+  const resp = await fetch(`${baseUrl}/status.json`, {cache: 'no-store'});
+  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+  const data = await resp.json();
+  return {label: hostStr || data.hostname, data};
+}
+
+async function load() {
+  if (AGENTS.length === 0) {
+    try {
+      HOSTS = [await fetchHost('')];
+    } catch(e) {
+      HOSTS = [{label: location.host, data: null, error: e.message}];
+    }
+  } else {
+    const results = await Promise.allSettled(AGENTS.map(fetchHost));
+    HOSTS = results.map((r, i) => r.status === 'fulfilled'
+      ? r.value
+      : {label: AGENTS[i], data: null, error: r.reason.message});
+  }
+
+  const valid = HOSTS.filter(h => h.data);
+  const hostnameEl = document.getElementById('hostname');
+  if (AGENTS.length === 0) {
+    hostnameEl.textContent = valid[0]?.label || '';
+  } else {
+    hostnameEl.innerHTML = `<a href="#/agents" style="color:#666;">${valid.length} of ${AGENTS.length} agents</a>`;
+  }
+
+  route();
+}
+
+load();
+setInterval(load, REFRESH_MS);
+</script>
+</body>
+</html>

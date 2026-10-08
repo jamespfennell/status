@@ -9,16 +9,26 @@ pub struct Config {
     to: lettre::message::Mailbox,
 }
 
+/// An email to send.
+pub struct Email {
+    pub subject: String,
+    pub body: String,
+    pub message_id: String,
+    /// Message ID of the email this replies to, so that mail clients thread them together.
+    pub in_reply_to: Option<String>,
+}
+
 pub trait Notifier: Send + Sync {
-    fn notify(&self, title: &str, body: &str);
+    fn notify(&self, email: &Email);
 }
 
 pub struct NoOpNotifier;
 
 impl Notifier for NoOpNotifier {
-    fn notify(&self, title: &str, _body: &str) {
+    fn notify(&self, email: &Email) {
         eprintln!(
-            "[email] notifications disabled; skipping sending notification with title {title}"
+            "[email] notifications disabled; skipping sending notification with subject {}:\n{}",
+            email.subject, email.body
         );
     }
 }
@@ -34,11 +44,11 @@ impl Client {
 }
 
 impl Notifier for Client {
-    fn notify(&self, title: &str, body: &str) {
+    fn notify(&self, email: &Email) {
         use lettre::message::header::ContentType;
         use lettre::Message;
         use lettre::Transport;
-        eprintln!("[email] sending email with title {title}");
+        eprintln!("[email] sending email with subject {}", email.subject);
         let transport = smtp::SmtpTransport::from_url(&self.config.smtp_url)
             .unwrap()
             .build();
@@ -51,14 +61,19 @@ impl Notifier for Client {
                 eprintln!("[email] failed to connect to SMTP server: {err:?}");
             }
         }
-        let email = Message::builder()
+        let mut builder = Message::builder()
             .from(self.config.from.clone())
             .to(self.config.to.clone())
-            .subject(title)
-            .header(ContentType::TEXT_PLAIN)
-            .body(body.to_string())
-            .unwrap();
-        let result = match transport.send(&email) {
+            .subject(&email.subject)
+            .message_id(Some(email.message_id.clone()))
+            .header(ContentType::TEXT_PLAIN);
+        if let Some(parent) = &email.in_reply_to {
+            builder = builder
+                .in_reply_to(parent.clone())
+                .references(parent.clone());
+        }
+        let message = builder.body(email.body.clone()).unwrap();
+        let result = match transport.send(&message) {
             Ok(_) => {
                 eprintln!("Email sent successfully!");
                 "success"

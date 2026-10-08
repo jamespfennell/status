@@ -4,6 +4,7 @@ mod database;
 mod email;
 mod http;
 mod metrics;
+mod outage;
 use std::sync::mpsc;
 
 fn main() {

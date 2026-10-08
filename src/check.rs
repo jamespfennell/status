@@ -4,6 +4,7 @@ use crate::config;
 use crate::database;
 use crate::email;
 use crate::metrics;
+use crate::outage;
 use std::sync;
 use std::sync::mpsc;
 use std::thread;
@@ -16,10 +17,12 @@ const INCIDENTS_RETENTION: usize = 20;
 const DAYS_RETENTION: usize = 90;
 
 const DB_KEY: &str = "check_manager/checks";
+const OUTAGE_DB_KEY: &str = "check_manager/outage";
 
 pub struct Manager<'a> {
     hostname: String,
     checks: sync::Mutex<Vec<Check>>,
+    outage: sync::Mutex<outage::Tracker>,
     db: &'a dyn database::DB,
     notifier: &'a dyn email::Notifier,
     poll_interval: chrono::Duration,
@@ -51,9 +54,13 @@ impl<'a> Manager<'a> {
         for check in &checks {
             check.init_metrics();
         }
+        let outage = database::get_typed(db, OUTAGE_DB_KEY)
+            .unwrap()
+            .unwrap_or_default();
         Self {
             hostname,
             checks: sync::Mutex::new(checks),
+            outage: sync::Mutex::new(outage),
             db,
             notifier,
             poll_interval,
@@ -117,15 +124,20 @@ impl<'a> Manager<'a> {
                         result.error.as_deref().unwrap_or("unknown error")
                     );
                 }
-                if let Some(notification) = check.record(result) {
-                    if let Notification::Down { .. } = notification {
-                        m.incidents.with_label_values(&[name]).inc();
-                    }
-                    let (title, body) = self.email(check, &notification);
-                    self.notifier.notify(&title, &body);
+                if check.record(result) == Some(Transition::Down) {
+                    m.incidents.with_label_values(&[name]).inc();
                 }
                 check.update_state_metrics();
             }
+            // Emails are sent per outage rather than per check, so that a whole node going
+            // down results in one email thread.
+            let down = checks.iter().filter_map(Check::down).collect();
+            let mut outage = self.outage.lock().unwrap();
+            if let Some(email) = outage.update(&self.hostname, chrono::Utc::now(), down) {
+                self.notifier.notify(&email);
+            }
+            database::set_typed(self.db, OUTAGE_DB_KEY.into(), &*outage).unwrap();
+            drop(outage);
             let saved: std::collections::BTreeMap<&str, &Check> = checks
                 .iter()
                 .map(|check| (check.config.name.as_str(), check))
@@ -155,33 +167,6 @@ impl<'a> Manager<'a> {
                     }
                 }
             }
-        }
-    }
-
-    fn email(&self, check: &Check, notification: &Notification) -> (String, String) {
-        let name = &check.config.name;
-        let url = &check.config.url;
-        let link = format!(
-            "https://{}/#/checks/{}/{}",
-            self.hostname,
-            percent_encode(&self.hostname),
-            percent_encode(name)
-        );
-        match notification {
-            Notification::Down { error } => (
-                format!("{name} is down"),
-                format!(
-                    "{url} failed {} consecutive checks.\n\nError: {error}\n\nDetails: {link}",
-                    check.consecutive_failures
-                ),
-            ),
-            Notification::Recovered { down_for } => (
-                format!("{name} is up again"),
-                format!(
-                    "{url} is responding again after being down for {}.\n\nDetails: {link}",
-                    format_duration(*down_for)
-                ),
-            ),
         }
     }
 }
@@ -343,9 +328,9 @@ struct Day {
 }
 
 #[derive(Debug, PartialEq)]
-enum Notification {
-    Down { error: String },
-    Recovered { down_for: chrono::Duration },
+enum Transition {
+    Down,
+    Recovered,
 }
 
 impl Check {
@@ -392,9 +377,21 @@ impl Check {
         }
     }
 
-    /// Records the result of a check, returning a notification to send if the state changed
+    /// Returns details of the check if it is down.
+    fn down(&self) -> Option<outage::Down> {
+        if self.state != State::Down {
+            return None;
+        }
+        Some(outage::Down {
+            name: self.config.name.clone(),
+            since: self.since?,
+            error: self.incidents.first()?.error.clone(),
+        })
+    }
+
+    /// Records the result of a check, returning the transition if the state changed
     /// from up to down or vice versa.
-    fn record(&mut self, result: CheckResult) -> Option<Notification> {
+    fn record(&mut self, result: CheckResult) -> Option<Transition> {
         let now = result.time;
         let date = now.date_naive();
         if self.days.first().map(|day| day.date) != Some(date) {
@@ -411,7 +408,7 @@ impl Check {
         }
         self.days[0].checks += 1;
 
-        let notification = if result.success {
+        let transition = if result.success {
             self.consecutive_failures = 0;
             self.failing_since = None;
             let previous_state = self.state;
@@ -421,11 +418,8 @@ impl Check {
             }
             match previous_state {
                 State::Down => {
-                    let incident = &mut self.incidents[0];
-                    incident.end = Some(now);
-                    Some(Notification::Recovered {
-                        down_for: now - incident.start,
-                    })
+                    self.incidents[0].end = Some(now);
+                    Some(Transition::Recovered)
                 }
                 State::Unknown | State::Up => None,
             }
@@ -447,11 +441,11 @@ impl Check {
                     Incident {
                         start: first_failure,
                         end: None,
-                        error: error.clone(),
+                        error,
                     },
                 );
                 self.incidents.truncate(INCIDENTS_RETENTION);
-                Some(Notification::Down { error })
+                Some(Transition::Down)
             } else {
                 None
             }
@@ -461,35 +455,8 @@ impl Check {
         }
         self.results.insert(0, result);
         self.results.truncate(RESULTS_RETENTION);
-        notification
+        transition
     }
-}
-
-fn format_duration(d: chrono::Duration) -> String {
-    let minutes = d.num_minutes();
-    if minutes < 1 {
-        format!("{}s", d.num_seconds())
-    } else if minutes < 60 {
-        format!("{minutes}m")
-    } else if minutes < 60 * 24 {
-        format!("{}h {}m", minutes / 60, minutes % 60)
-    } else {
-        format!("{}d {}h", minutes / (60 * 24), (minutes / 60) % 24)
-    }
-}
-
-/// Percent-encodes everything except unreserved characters, matching JavaScript's
-/// encodeURIComponent closely enough for links to the status page.
-fn percent_encode(s: &str) -> String {
-    let mut out = String::new();
-    for b in s.bytes() {
-        if b.is_ascii_alphanumeric() || b"-_.~".contains(&b) {
-            out.push(b as char);
-        } else {
-            out.push_str(&format!("%{b:02X}"));
-        }
-    }
-    out
 }
 
 #[cfg(test)]
@@ -546,12 +513,7 @@ mod tests {
         assert_eq!(check.record(result(1, false)), None);
         assert_eq!(check.record(result(2, false)), None);
         assert_eq!(check.state, State::Up);
-        assert_eq!(
-            check.record(result(3, false)),
-            Some(Notification::Down {
-                error: "HTTP 502".into()
-            })
-        );
+        assert_eq!(check.record(result(3, false)), Some(Transition::Down));
         assert_eq!(check.state, State::Down);
         assert_eq!(check.since, Some(time(1)));
         assert_eq!(check.incidents.len(), 1);
@@ -561,12 +523,7 @@ mod tests {
         // Further failures don't send more emails.
         assert_eq!(check.record(result(4, false)), None);
 
-        assert_eq!(
-            check.record(result(5, true)),
-            Some(Notification::Recovered {
-                down_for: chrono::Duration::minutes(4)
-            })
-        );
+        assert_eq!(check.record(result(5, true)), Some(Transition::Recovered));
         assert_eq!(check.state, State::Up);
         assert_eq!(check.since, Some(time(5)));
         assert_eq!(check.incidents[0].end, Some(time(5)));
@@ -587,12 +544,7 @@ mod tests {
     #[test]
     fn unknown_to_down_notifies() {
         let mut check = new_check(1);
-        assert_eq!(
-            check.record(result(0, false)),
-            Some(Notification::Down {
-                error: "HTTP 502".into()
-            })
-        );
+        assert_eq!(check.record(result(0, false)), Some(Transition::Down));
         assert_eq!(check.state, State::Down);
         assert_eq!(check.since, Some(time(0)));
     }
@@ -626,10 +578,5 @@ mod tests {
         }
         assert_eq!(check.days.len(), DAYS_RETENTION);
         assert_eq!(check.results.len(), RESULTS_RETENTION);
-    }
-
-    #[test]
-    fn encode() {
-        assert_eq!(percent_encode("a.b-c (d)/é"), "a.b-c%20%28d%29%2F%C3%A9");
     }
 }

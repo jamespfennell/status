@@ -6,7 +6,9 @@ COPY Cargo.toml .
 RUN mkdir src
 RUN echo "fn main() {}" > src/main.rs
 RUN cargo fetch
+COPY build.rs .
 COPY src src
+ARG GIT_COMMIT
 RUN cargo build --release
 
 

@@ -5,17 +5,49 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Status</title>
 <style>
+/* Colors follow the system light/dark setting. Dark backgrounds match jamesfennell.dev. */
+:root {
+  color-scheme: light dark;
+  --bg: light-dark(#f5f5f5, #222);
+  --surface: light-dark(white, #2d2d2d);
+  --surface-hover: light-dark(#fafafa, #333);
+  --text: light-dark(#1a1a1a, #ddd);
+  --text-strong: light-dark(#333, #fff);
+  --text-2: light-dark(#444, #bbb);
+  --text-3: light-dark(#555, #aaa);
+  --muted: light-dark(#666, #999);
+  --faint: light-dark(#777, #888);
+  --link: light-dark(#2563eb, #60a5fa);
+  --border: light-dark(#ddd, #3d3d3d);
+  --divider: light-dark(#eee, #383838);
+  --axis: light-dark(#bbb, #555);
+  --grid: light-dark(#e5e5e5, #3a3a3a);
+  --empty: light-dark(#f3f4f6, #383838);
+  --tick-empty: light-dark(#e5e7eb, #444);
+  --green-bg: light-dark(#dcfce7, #1f3a28);
+  --green-border: light-dark(#86efac, #2f6b43);
+  --green-text: light-dark(#15803d, #86efac);
+  --red-bg: light-dark(#fee2e2, #44262a);
+  --red-border: light-dark(#fca5a5, #7f3a3a);
+  --red-text: light-dark(#b91c1c, #fca5a5);
+  --red-text-strong: light-dark(#991b1b, #fca5a5);
+  --orange-bg: light-dark(#ffedd5, #45301f);
+  --orange-text: light-dark(#c2410c, #fdba74);
+  --gray-text: light-dark(#6b7280, #aaa);
+  --tooltip-bg: light-dark(#1a1a1a, #111);
+}
+
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
 body {
   font-family: system-ui, -apple-system, sans-serif;
-  background: #f5f5f5;
-  color: #1a1a1a;
+  background: var(--bg);
+  color: var(--text);
   font-size: 15px;
   line-height: 1.5;
 }
 
-a { color: #2563eb; text-decoration: none; }
+a { color: var(--link); text-decoration: none; }
 a:hover { text-decoration: underline; }
 
 .container {
@@ -30,11 +62,11 @@ a:hover { text-decoration: underline; }
   gap: 12px;
   margin-bottom: 32px;
   padding-bottom: 16px;
-  border-bottom: 1px solid #ddd;
+  border-bottom: 1px solid var(--border);
 }
 .site-header h1 { font-size: 1.1rem; font-weight: 600; }
 .site-header h1 a { color: inherit; }
-.site-header .hostname { color: #666; font-size: 0.875rem; }
+.site-header .hostname { color: var(--muted); font-size: 0.875rem; }
 
 .breadcrumb {
   display: flex;
@@ -42,21 +74,21 @@ a:hover { text-decoration: underline; }
   gap: 6px;
   font-size: 0.875rem;
   margin-bottom: 20px;
-  color: #555;
+  color: var(--text-3);
 }
-.breadcrumb a { color: #555; }
-.breadcrumb a:hover { color: #1a1a1a; text-decoration: underline; }
-.breadcrumb .sep { color: #bbb; }
+.breadcrumb a { color: var(--text-3); }
+.breadcrumb a:hover { color: var(--text); text-decoration: underline; }
+.breadcrumb .sep { color: var(--axis); }
 
 .page-title { font-size: 1.4rem; font-weight: 700; margin-bottom: 4px; overflow-wrap: anywhere; }
-.page-subtitle { color: #444; font-size: 0.9rem; margin-bottom: 24px; overflow-wrap: anywhere; }
+.page-subtitle { color: var(--text-2); font-size: 0.9rem; margin-bottom: 24px; overflow-wrap: anywhere; }
 
 .section-label {
   font-size: 0.7rem;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  color: #777;
+  color: var(--faint);
   margin-bottom: 8px;
 }
 .section { margin-top: 24px; }
@@ -70,14 +102,14 @@ a:hover { text-decoration: underline; }
   letter-spacing: 0.02em;
   white-space: nowrap;
 }
-.badge-green  { background: #dcfce7; color: #15803d; }
-.badge-red    { background: #fee2e2; color: #b91c1c; }
-.badge-orange { background: #ffedd5; color: #c2410c; }
-.badge-gray   { background: #f3f4f6; color: #6b7280; }
+.badge-green  { background: var(--green-bg); color: var(--green-text); }
+.badge-red    { background: var(--red-bg); color: var(--red-text); }
+.badge-orange { background: var(--orange-bg); color: var(--orange-text); }
+.badge-gray   { background: var(--empty); color: var(--gray-text); }
 
 .card {
-  background: white;
-  border: 1px solid #ddd;
+  background: var(--surface);
+  border: 1px solid var(--border);
   border-radius: 8px;
   overflow: hidden;
 }
@@ -89,18 +121,18 @@ a:hover { text-decoration: underline; }
   margin-bottom: 24px;
   font-weight: 600;
 }
-.banner-green { background: #dcfce7; border: 1px solid #86efac; color: #15803d; }
-.banner-red   { background: #fee2e2; border: 1px solid #fca5a5; color: #991b1b; }
-.banner-gray  { background: #f3f4f6; border: 1px solid #ddd; color: #555; }
+.banner-green { background: var(--green-bg); border: 1px solid var(--green-border); color: var(--green-text); }
+.banner-red   { background: var(--red-bg); border: 1px solid var(--red-border); color: var(--red-text-strong); }
+.banner-gray  { background: var(--empty); border: 1px solid var(--border); color: var(--text-3); }
 .banner-meta  { font-weight: 400; font-size: 0.85rem; margin-top: 2px; }
 .load-error {
-  background: #fee2e2;
-  border: 1px solid #fca5a5;
+  background: var(--red-bg);
+  border: 1px solid var(--red-border);
   border-radius: 8px;
   padding: 12px 16px;
   margin-bottom: 10px;
   font-size: 0.875rem;
-  color: #991b1b;
+  color: var(--red-text-strong);
 }
 
 .controls {
@@ -112,23 +144,25 @@ a:hover { text-decoration: underline; }
   margin-bottom: 8px;
 }
 .controls .section-label { margin-bottom: 0; }
-.toggles { display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: 0.75rem; color: #666; }
+.toggles { display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: 0.75rem; color: var(--muted); }
 .toggle { cursor: pointer; }
-.toggle.active { font-weight: 700; color: #333; }
+.toggle.active { font-weight: 700; color: var(--text-strong); }
 #filter {
   width: 100%;
   padding: 8px 12px;
-  border: 1px solid #ddd;
+  border: 1px solid var(--border);
   border-radius: 6px;
   font-size: 0.9rem;
   margin-bottom: 12px;
   outline: none;
+  background: var(--surface);
+  color: inherit;
 }
 
 /* Checks on the overview, stacked in a single card */
-a.check { display: block; color: inherit; border-top: 1px solid #eee; padding: 10px 16px; }
+a.check { display: block; color: inherit; border-top: 1px solid var(--divider); padding: 10px 16px; }
 a.check:first-child { border-top: none; }
-a.check:hover { text-decoration: none; background: #fafafa; }
+a.check:hover { text-decoration: none; background: var(--surface-hover); }
 .check-row {
   display: flex;
   align-items: center;
@@ -144,12 +178,12 @@ a.check:hover { text-decoration: none; background: #fafafa; }
 .tick-green  { background: #22c55e; }
 .tick-orange { background: #f59e0b; }
 .tick-red    { background: #ef4444; }
-.tick-gray   { background: #e5e7eb; }
+.tick-gray   { background: var(--tick-empty); }
 .ticks-legend {
   display: flex;
   justify-content: space-between;
   font-size: 0.75rem;
-  color: #777;
+  color: var(--faint);
   margin-top: 4px;
 }
 .short-range { display: none; }
@@ -165,23 +199,23 @@ a.check:hover { text-decoration: none; background: #fafafa; }
   align-items: center;
   gap: 12px;
   padding: 12px 18px;
-  border-top: 1px solid #eee;
+  border-top: 1px solid var(--divider);
 }
 .row:first-child { border-top: none; }
 .row-left { flex: 1; min-width: 0; }
 .row-title { font-weight: 500; overflow-wrap: anywhere; }
-.row-meta { font-size: 0.85rem; color: #555; margin-top: 2px; overflow-wrap: anywhere; }
-.empty { padding: 14px 18px; color: #666; }
+.row-meta { font-size: 0.85rem; color: var(--text-3); margin-top: 2px; overflow-wrap: anywhere; }
+.empty { padding: 14px 18px; color: var(--muted); }
 
 /* Recent checks chart: one fixed-width slot per poll interval, height is the response time */
 .latency { position: relative; }
-.latency-summary { font-size: 0.85rem; color: #555; margin-bottom: 10px; }
+.latency-summary { font-size: 0.85rem; color: var(--text-3); margin-bottom: 10px; }
 .latency-plot { display: flex; gap: 6px; }
 .latency-axis {
   position: relative;
   font-size: 0.7rem;
   line-height: 1;
-  color: #777;
+  color: var(--faint);
   text-align: right;
   font-variant-numeric: tabular-nums;
   height: 80px;
@@ -197,18 +231,18 @@ a.check:hover { text-decoration: none; background: #fafafa; }
   left: 0;
   right: 0;
   height: 80px;
-  border-left: 1px solid #bbb;
-  border-right: 1px solid #bbb;
-  border-bottom: 1px solid #bbb;
+  border-left: 1px solid var(--axis);
+  border-right: 1px solid var(--axis);
+  border-bottom: 1px solid var(--axis);
   pointer-events: none;
 }
-.latency-grid div { position: absolute; left: 0; right: 0; border-top: 1px solid #e5e5e5; }
+.latency-grid div { position: absolute; left: 0; right: 0; border-top: 1px solid var(--grid); }
 .latency-scroll { position: relative; overflow-x: auto; }
 /* Right-aligned when narrower than the box, so "now" is always at the right edge. */
 .latency-content { position: relative; width: max-content; margin-left: auto; }
 /* Tick marks below the x-axis at the time labels. */
 .latency-ticks { position: absolute; top: 80px; left: 0; right: 0; height: 4px; pointer-events: none; }
-.latency-ticks div { position: absolute; top: 0; bottom: 0; border-left: 1px solid #bbb; }
+.latency-ticks div { position: absolute; top: 0; bottom: 0; border-left: 1px solid var(--axis); }
 .latency-bars {
   position: relative;
   height: 80px;
@@ -221,14 +255,14 @@ a.check:hover { text-decoration: none; background: #fafafa; }
 .latency-bar { width: 100%; border-radius: 1px 1px 0 0; background: #22c55e; }
 .latency-bar.failed { background: #ef4444; }
 .latency-slot.active .latency-bar { opacity: 0.6; }
-.latency-slot.active.no-check { background: #f3f4f6; }
-.latency-times { position: relative; height: 1.4em; font-size: 0.7rem; color: #777; margin-top: 5px; }
+.latency-slot.active.no-check { background: var(--empty); }
+.latency-times { position: relative; height: 1.4em; font-size: 0.7rem; color: var(--faint); margin-top: 5px; }
 .latency-times span { position: absolute; transform: translateX(-50%); white-space: nowrap; }
 .latency-tooltip {
   position: absolute;
   margin-bottom: 6px;
   transform: translate(-50%, -100%);
-  background: #1a1a1a;
+  background: var(--tooltip-bg);
   color: white;
   font-size: 0.75rem;
   padding: 6px 8px;
@@ -240,13 +274,20 @@ a.check:hover { text-decoration: none; background: #fafafa; }
 }
 .latency-tooltip .error { color: #fca5a5; white-space: normal; max-width: 260px; }
 
+.site-footer {
+  margin-top: 40px;
+  text-align: center;
+  color: var(--faint);
+}
+.site-footer a { color: inherit; font-family: ui-monospace, monospace; }
+
 .config-pre {
   font-family: ui-monospace, monospace;
   font-size: 0.8rem;
   padding: 16px 18px;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  color: #333;
+  color: var(--text-strong);
 }
 </style>
 </head>
@@ -257,6 +298,9 @@ a.check:hover { text-decoration: none; background: #fafafa; }
     <span class="hostname" id="hostname"></span>
   </div>
   <div id="app"></div>
+  <footer class="site-footer">
+    version <a href="https://github.com/jamespfennell/status/commit/__GIT_COMMIT__">__GIT_COMMIT_SHORT__</a> (built __BUILD_DATE__)
+  </footer>
 </div>
 
 <script>
@@ -537,7 +581,7 @@ function renderAgents() {
       html += `<div class="row">
         <div class="row-left">
           <div class="row-title">${esc(h.label)}</div>
-          <div class="row-meta" style="color:#b91c1c;">Failed to load: ${esc(h.error)}</div>
+          <div class="row-meta" style="color:var(--red-text);">Failed to load: ${esc(h.error)}</div>
         </div>
       </div>`;
       return;
@@ -584,7 +628,7 @@ function renderOverview() {
   }
 
   if (allChecks.length === 0 && failed.length === 0) {
-    html += '<p style="color:#666;">No checks configured.</p>';
+    html += '<p style="color:var(--muted);">No checks configured.</p>';
   } else if (allChecks.length > 0) {
     const toggle = (label, active, onclick) =>
       `<span class="toggle${active ? ' active' : ''}" onclick="${onclick}">${label}</span>`;
@@ -616,7 +660,7 @@ function renderOverview() {
         : (a, b) => STATE_ORDER[displayState(a)] - STATE_ORDER[displayState(b)] || byName(a, b));
 
     if (visible.length === 0) {
-      html += `<p style="color:#666;">No checks match.</p>`;
+      html += `<p style="color:var(--muted);">No checks match.</p>`;
     }
     if (visible.length > 0) {
       html += `<div class="card">${visible.map(c => {
@@ -717,7 +761,7 @@ async function load() {
   if (AGENTS.length === 0) {
     hostnameEl.textContent = valid[0]?.label || '';
   } else {
-    hostnameEl.innerHTML = `<a href="#/agents" style="color:#666;">${valid.length} of ${AGENTS.length} agents</a>`;
+    hostnameEl.innerHTML = `<a href="#/agents" style="color:var(--muted);">${valid.length} of ${AGENTS.length} agents</a>`;
   }
 
   route();

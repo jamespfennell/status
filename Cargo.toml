@@ -14,3 +14,6 @@ chrono = { version = "0.4.32", features = ["serde"] }
 clap = { version="4.5.36", features=["derive"] }
 lettre = { version = "0.11.15", default-features = false, features=["serde", "smtp-transport", "native-tls", "builder"] }
 prometheus = { version = "0.14.0", default-features = false }
+
+[build-dependencies]
+chrono = "0.4.32"

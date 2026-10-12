@@ -58,7 +58,7 @@ impl<'a> Service<'a> {
         Stopper { server }
     }
     fn index_html(&self) -> String {
-        STATUS_DOT_HTML.replace("__AGENTS__", "[]")
+        status_dot_html("[]")
     }
     fn status_json(&self) -> String {
         let data = Data {
@@ -88,7 +88,7 @@ pub fn start_ui<'scope>(
     agents: Vec<String>,
 ) -> Stopper {
     let agents_json = serde_json::to_string(&agents).unwrap();
-    let html = STATUS_DOT_HTML.replace("__AGENTS__", &agents_json);
+    let html = status_dot_html(&agents_json);
     let server = sync::Arc::new(tiny_http::Server::http(format!("0.0.0.0:{port}")).unwrap());
     let server_cloned = server.clone();
     scope.spawn(move || {
@@ -112,6 +112,15 @@ pub fn start_ui<'scope>(
 }
 
 static STATUS_DOT_HTML: &str = include_str!("status.html");
+
+fn status_dot_html(agents_json: &str) -> String {
+    let commit = env!("STATUS_GIT_COMMIT");
+    STATUS_DOT_HTML
+        .replace("__AGENTS__", agents_json)
+        .replace("__GIT_COMMIT__", commit)
+        .replace("__GIT_COMMIT_SHORT__", &commit[..commit.len().min(7)])
+        .replace("__BUILD_DATE__", env!("STATUS_BUILD_DATE"))
+}
 
 #[derive(Debug, serde::Serialize)]
 struct Data {

@@ -181,7 +181,12 @@ fn probe(config: &config::CheckConfig, hostname: &str) -> (CheckResult, &'static
         .user_agent(&format!("status-agent ({hostname})"))
         .build();
     let start = std::time::Instant::now();
-    let response = match agent.get(&config.url).call() {
+    let request = if config.skip_body {
+        agent.head(&config.url)
+    } else {
+        agent.get(&config.url)
+    };
+    let response = match request.call() {
         Ok(response) => Ok(response),
         // Responses with 4xx and 5xx status codes are returned as errors by ureq.
         Err(ureq::Error::Status(_, response)) => Ok(response),
@@ -468,6 +473,7 @@ mod tests {
             name: "test".into(),
             url: "https://example.com".into(),
             view: config::View::Status,
+            skip_body: false,
             expected_status: None,
             contains: None,
             timeout_secs: 10,

@@ -42,6 +42,13 @@ pub struct CheckConfig {
     #[serde(default)]
     pub view: View,
 
+    /// Skip downloading the response body; defaults to false.
+    ///
+    /// The URL is requested with HEAD instead of GET, which is useful for large files.
+    /// It can't be used with `contains`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub skip_body: bool,
+
     /// HTTP status code the response must have.
     ///
     /// If not set, any 2xx status code is accepted.
@@ -94,6 +101,12 @@ pub fn load(path: &std::path::Path) -> Result<Config, String> {
         if check.failure_threshold == 0 {
             return Err(format!(
                 "check {:?} has a failure_threshold of 0; it must be at least 1",
+                check.name
+            ));
+        }
+        if check.skip_body && check.contains.is_some() {
+            return Err(format!(
+                "check {:?} sets both contains and skip_body",
                 check.name
             ));
         }
@@ -162,6 +175,7 @@ checks:
   failure_threshold: 5
 - name: service docs
   url: https://example.com/docs
+  skip_body: true
 ",
         );
 
@@ -171,6 +185,7 @@ checks:
         assert_eq!(names, vec!["inline", "service", "service docs"]);
         let inline = &config.checks[0];
         assert_eq!(inline.view, View::Status);
+        assert!(!inline.skip_body);
         assert_eq!(inline.expected_status, None);
         assert_eq!(inline.contains, None);
         assert_eq!(inline.timeout_secs, 10);
@@ -181,6 +196,26 @@ checks:
         assert_eq!(service.contains.as_deref(), Some("ok"));
         assert_eq!(service.timeout_secs, 3);
         assert_eq!(service.failure_threshold, 5);
+        assert!(config.checks[2].skip_body);
+    }
+
+    #[test]
+    fn skip_body_with_contains() {
+        let dir = test_dir("status_config_skip_body");
+        write(
+            &dir.join("config.yml"),
+            "
+hostname: example.com
+checks:
+- name: service
+  url: https://example.com
+  skip_body: true
+  contains: ok
+",
+        );
+
+        let err = load(&dir.join("config.yml")).unwrap_err();
+        assert!(err.contains("skip_body"), "{err}");
     }
 
     #[test]

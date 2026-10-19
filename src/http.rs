@@ -64,7 +64,7 @@ impl<'a> Service<'a> {
         let data = Data {
             hostname: self.hostname.clone(),
             poll_interval_secs: self.check_manager.poll_interval().num_seconds(),
-            checks: self.check_manager.checks(),
+            projects: self.check_manager.projects(),
         };
         serde_json::to_string_pretty(&data).unwrap()
     }
@@ -126,5 +126,5 @@ fn status_dot_html(agents_json: &str) -> String {
 struct Data {
     hostname: String,
     poll_interval_secs: i64,
-    checks: Vec<check::Check>,
+    projects: Vec<check::Project>,
 }

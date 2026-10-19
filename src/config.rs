@@ -11,36 +11,49 @@ pub struct Config {
     /// This is used when sending emails and on the status page.
     pub hostname: String,
 
-    /// List of URLs to check.
-    #[serde(default)]
-    pub checks: Vec<CheckConfig>,
+    /// URL of the status page that links in emails point to; e.g. https://status.example.com/.
+    ///
+    /// This is usually the aggregate UI. Defaults to the agent's own page.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ui_url: Option<String>,
 
-    /// Paths to files that each contain a list of check configs.
+    /// Projects to check.
+    #[serde(default)]
+    pub projects: Vec<ProjectConfig>,
+
+    /// Paths to files that each contain a project config.
     ///
     /// Paths are relative to the directory containing this config file.
-    /// Checks loaded from these files are added to `checks`.
+    /// Projects loaded from these files are added to `projects`.
     #[serde(default)]
     pub include: Vec<String>,
 
     pub email_config: Option<email::Config>,
 }
 
+/// A project and the URLs to check for it.
+///
+/// The project is down if any of its checks are down. Several projects with the same name
+/// are merged, so a project can be split across files and across agents.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProjectConfig {
+    /// Name of the project.
+    pub project: String,
+
+    /// URLs to check for the project.
+    pub checks: Vec<CheckConfig>,
+}
+
 /// A URL to check periodically.
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CheckConfig {
-    /// Name of the check. Must be unique within the agent.
+    /// Name of the check. Must be unique within the project.
     pub name: String,
 
     /// URL to request. Redirects are followed.
     pub url: String,
-
-    /// How the check is shown on the status page by default.
-    ///
-    /// Either `status` (only the current state) or `history` (daily uptime over the last 90 days).
-    /// The page has a toggle to switch all checks to either view.
-    #[serde(default)]
-    pub view: View,
 
     /// Skip downloading the response body; defaults to false.
     ///
@@ -69,14 +82,6 @@ pub struct CheckConfig {
     pub failure_threshold: u32,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum View {
-    #[default]
-    Status,
-    History,
-}
-
 fn ten() -> u64 {
     10
 }
@@ -85,33 +90,65 @@ fn two() -> u32 {
     2
 }
 
-/// Loads the config at the given path, including any checks in `include` files.
+/// Loads the config at the given path, including any projects in `include` files.
+///
+/// Projects with the same name are merged and the result is sorted by project name.
 pub fn load(path: &std::path::Path) -> Result<Config, String> {
     let mut config: Config = read_yaml(path)?;
     let config_dir = path.parent().unwrap_or(std::path::Path::new("."));
     for include in std::mem::take(&mut config.include) {
-        let mut checks: Vec<CheckConfig> = read_yaml(&config_dir.join(&include))?;
-        config.checks.append(&mut checks);
+        let project: ProjectConfig = read_yaml(&config_dir.join(&include))?;
+        config.projects.push(project);
     }
-    let mut names = std::collections::HashSet::new();
-    for check in &config.checks {
-        if !names.insert(check.name.clone()) {
-            return Err(format!("duplicate check name {:?}", check.name));
-        }
-        if check.failure_threshold == 0 {
-            return Err(format!(
-                "check {:?} has a failure_threshold of 0; it must be at least 1",
-                check.name
-            ));
-        }
-        if check.skip_body && check.contains.is_some() {
-            return Err(format!(
-                "check {:?} sets both contains and skip_body",
-                check.name
-            ));
+    let mut projects: std::collections::BTreeMap<String, ProjectConfig> = Default::default();
+    for mut project in std::mem::take(&mut config.projects) {
+        match projects.get_mut(&project.project) {
+            None => {
+                projects.insert(project.project.clone(), project);
+            }
+            Some(existing) => existing.checks.append(&mut project.checks),
         }
     }
+    for project in projects.values() {
+        let mut names = std::collections::HashSet::new();
+        for check in &project.checks {
+            if !names.insert(check.name.clone()) {
+                return Err(format!(
+                    "duplicate check name {:?} in project {:?}",
+                    check.name, project.project
+                ));
+            }
+            if check.failure_threshold == 0 {
+                return Err(format!(
+                    "check {:?} has a failure_threshold of 0; it must be at least 1",
+                    check.name
+                ));
+            }
+            if check.skip_body && check.contains.is_some() {
+                return Err(format!(
+                    "check {:?} sets both contains and skip_body",
+                    check.name
+                ));
+            }
+        }
+    }
+    config.projects = projects.into_values().collect();
     Ok(config)
+}
+
+impl Config {
+    /// Returns the URL of the status page, ending in a slash.
+    pub fn ui_url(&self) -> String {
+        let url = match &self.ui_url {
+            None => format!("https://{}/", self.hostname),
+            Some(url) => url.clone(),
+        };
+        if url.ends_with('/') {
+            url
+        } else {
+            format!("{url}/")
+        }
+    }
 }
 
 fn read_yaml<T: serde::de::DeserializeOwned>(path: &std::path::Path) -> Result<T, String> {
@@ -158,21 +195,32 @@ mod tests {
 hostname: example.com
 include:
 - ../service/status.yml
-checks:
-- name: inline
-  url: https://example.com
+- ../service/status-2.yml
+projects:
+- project: inline
+  checks:
+  - name: inline
+    url: https://example.com
 ",
         );
         write(
             &dir.join("service/status.yml"),
             "
+project: service
+checks:
 - name: service
   url: https://example.com/a
-  view: history
   expected_status: 204
   contains: ok
   timeout_secs: 3
   failure_threshold: 5
+",
+        );
+        write(
+            &dir.join("service/status-2.yml"),
+            "
+project: service
+checks:
 - name: service docs
   url: https://example.com/docs
   skip_body: true
@@ -181,22 +229,36 @@ checks:
 
         let config = load(&dir.join("agent/config.yml")).unwrap();
 
-        let names: Vec<&str> = config.checks.iter().map(|c| c.name.as_str()).collect();
-        assert_eq!(names, vec!["inline", "service", "service docs"]);
-        let inline = &config.checks[0];
-        assert_eq!(inline.view, View::Status);
+        let names: Vec<(&str, Vec<&str>)> = config
+            .projects
+            .iter()
+            .map(|p| {
+                (
+                    p.project.as_str(),
+                    p.checks.iter().map(|c| c.name.as_str()).collect(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            names,
+            vec![
+                ("inline", vec!["inline"]),
+                ("service", vec!["service", "service docs"])
+            ]
+        );
+        let inline = &config.projects[0].checks[0];
         assert!(!inline.skip_body);
         assert_eq!(inline.expected_status, None);
         assert_eq!(inline.contains, None);
         assert_eq!(inline.timeout_secs, 10);
         assert_eq!(inline.failure_threshold, 2);
-        let service = &config.checks[1];
-        assert_eq!(service.view, View::History);
+        let service = &config.projects[1].checks[0];
         assert_eq!(service.expected_status, Some(204));
         assert_eq!(service.contains.as_deref(), Some("ok"));
         assert_eq!(service.timeout_secs, 3);
         assert_eq!(service.failure_threshold, 5);
-        assert!(config.checks[2].skip_body);
+        assert!(config.projects[1].checks[1].skip_body);
+        assert_eq!(config.ui_url(), "https://example.com/");
     }
 
     #[test]
@@ -206,11 +268,13 @@ checks:
             &dir.join("config.yml"),
             "
 hostname: example.com
-checks:
-- name: service
-  url: https://example.com
-  skip_body: true
-  contains: ok
+projects:
+- project: service
+  checks:
+  - name: service
+    url: https://example.com
+    skip_body: true
+    contains: ok
 ",
         );
 
@@ -227,21 +291,32 @@ checks:
 hostname: example.com
 include:
 - other.yml
-checks:
-- name: service
-  url: https://example.com
+projects:
+- project: service
+  checks:
+  - name: service
+    url: https://example.com
+- project: other service
+  checks:
+  - name: service
+    url: https://example.com
 ",
         );
         write(
             &dir.join("other.yml"),
             "
+project: service
+checks:
 - name: service
   url: https://example.com/other
 ",
         );
 
         let err = load(&dir.join("config.yml")).unwrap_err();
-        assert!(err.contains("duplicate check name"), "{err}");
+        assert!(
+            err.contains(r#"duplicate check name "service" in project "service""#),
+            "{err}"
+        );
     }
 
     #[test]
@@ -251,14 +326,25 @@ checks:
             &dir.join("config.yml"),
             "
 hostname: example.com
-checks:
-- name: service
-  url: https://example.com
-  contans: ok
+ui_url: https://status.example.com
+projects:
+- project: service
+  checks:
+  - name: service
+    url: https://example.com
+    contans: ok
 ",
         );
 
         let err = load(&dir.join("config.yml")).unwrap_err();
         assert!(err.contains("contans"), "{err}");
+    }
+
+    #[test]
+    fn ui_url() {
+        let config: Config =
+            serde_yaml::from_str("hostname: example.com\nui_url: https://status.example.com")
+                .unwrap();
+        assert_eq!(config.ui_url(), "https://status.example.com/");
     }
 }

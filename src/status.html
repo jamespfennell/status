@@ -159,7 +159,7 @@ a:hover { text-decoration: underline; }
   color: inherit;
 }
 
-/* Checks on the overview, stacked in a single card */
+/* Projects on the overview and checks on a project page, stacked in a single card */
 a.check { display: block; color: inherit; border-top: 1px solid var(--divider); padding: 10px 16px; }
 a.check:first-child { border-top: none; }
 a.check:hover { text-decoration: none; background: var(--surface-hover); }
@@ -170,6 +170,8 @@ a.check:hover { text-decoration: none; background: var(--surface-hover); }
 }
 .check-row .badge { flex-shrink: 0; }
 .check-name { font-weight: 500; overflow-wrap: anywhere; min-width: 0; }
+.check-count { margin-left: auto; padding-left: 8px; font-size: 0.8rem; color: var(--muted); white-space: nowrap; }
+.check-meta { font-size: 0.85rem; color: var(--text-3); margin-top: 2px; overflow-wrap: anywhere; }
 .check-history { margin-top: 8px; }
 
 /* Uptime history */
@@ -309,7 +311,7 @@ const REFRESH_MS = 60 * 1000;
 const DAYS = 90;
 let HOSTS = []; // [{label, data, error}] — data is null if fetch failed
 let sortAlpha = false;
-let viewMode = 'default'; // 'default', 'status' or 'history'
+let viewMode = 'history'; // 'status' or 'history'
 let filterText = '';
 
 function esc(s) {
@@ -345,13 +347,17 @@ function displayState(c) {
   return c.state;
 }
 
-function badge(c) {
-  switch (displayState(c)) {
+function stateBadge(state, failingLabel) {
+  switch (state) {
     case 'up':      return `<span class="badge badge-green">Up</span>`;
     case 'down':    return `<span class="badge badge-red">Down</span>`;
-    case 'failing': return `<span class="badge badge-orange">Failing ${c.consecutive_failures}/${c.config.failure_threshold}</span>`;
+    case 'failing': return `<span class="badge badge-orange">${esc(failingLabel || 'Failing')}</span>`;
     default:        return `<span class="badge badge-gray">Unknown</span>`;
   }
+}
+
+function badge(c) {
+  return stateBadge(displayState(c), `Failing ${c.consecutive_failures}/${c.config.failure_threshold}`);
 }
 
 function stateMeta(c) {
@@ -362,6 +368,71 @@ function stateMeta(c) {
     case 'failing': return `Failing for ${formatDuration(c.failing_since)}` + (latest?.error ? ` · ${latest.error}` : '');
     default:        return latest ? `Last checked ${durationSince(latest.time)}` : 'Not checked yet';
   }
+}
+
+// Projects merged across agents by name. Each project has the part of it checked by each agent,
+// and all of its checks labelled with the agent that checks them.
+function allProjects() {
+  const byName = new Map();
+  HOSTS.filter(h => h.data).forEach(h => (h.data.projects || []).forEach(p => {
+    if (!byName.has(p.name)) byName.set(p.name, {name: p.name, parts: [], checks: []});
+    const merged = byName.get(p.name);
+    merged.parts.push({host: h.label, project: p});
+    p.checks.forEach(c => merged.checks.push({...c, _host: h.label, _project: p.name}));
+  }));
+  return [...byName.values()];
+}
+
+// A project is down if any check is down, failing if any check is failing, and up if any check is up.
+function projectState(p) {
+  const states = p.checks.map(displayState);
+  return ['down', 'failing', 'up'].find(s => states.includes(s)) || 'unknown';
+}
+
+function countState(p, state) {
+  return p.checks.filter(c => displayState(c) === state).length;
+}
+
+// Short summary of the checks for the overview; empty for projects with one check.
+function projectCount(p) {
+  const n = p.checks.length;
+  if (n === 1) return '';
+  const down = countState(p, 'down');
+  const failing = countState(p, 'failing');
+  if (down) return `${down} of ${n} down`;
+  if (failing) return `${failing} of ${n} failing`;
+  return `${n} checks`;
+}
+
+function projectMeta(p) {
+  const n = p.checks.length;
+  if (n === 1) return stateMeta(p.checks[0]);
+  const sinces = state => p.parts.filter(x => x.project.state === state && x.project.since).map(x => x.project.since).sort();
+  switch (projectState(p)) {
+    case 'down': {
+      const since = sinces('down')[0];
+      return (since ? `Down for ${formatDuration(since)} · ` : '') + `${countState(p, 'down')} of ${n} checks down`;
+    }
+    case 'failing': return `${countState(p, 'failing')} of ${n} checks failing`;
+    case 'up': {
+      const since = sinces('up').pop();
+      return (since ? `Up for ${formatDuration(since)} · ` : '') + `${n} checks`;
+    }
+    default: return `${n} checks`;
+  }
+}
+
+// Daily history of the project. If several agents check the project, each day shows the agent
+// with the lowest uptime, and is marked down if the project was down on any agent.
+function projectDays(p) {
+  if (p.parts.length === 1) return p.parts[0].project.days;
+  const uptime = d => d.checks ? (d.checks - d.failures) / d.checks : 1;
+  const byDate = {};
+  p.parts.forEach(({project}) => project.days.forEach(d => {
+    const e = byDate[d.date];
+    byDate[d.date] = !e ? {...d} : {...(uptime(d) < uptime(e) ? d : e), down: d.down || e.down};
+  }));
+  return Object.values(byDate);
 }
 
 const STATE_ORDER = {down: 0, failing: 1, unknown: 2, up: 3};
@@ -382,14 +453,18 @@ function render(html) {
   if (g && hadFocus) { g.focus(); g.setSelectionRange(g.value.length, g.value.length); }
 }
 
-function checkUrl(host, name) {
-  return `#/checks/${encodeURIComponent(host)}/${encodeURIComponent(name)}`;
+function projectUrl(name) {
+  return `#/projects/${encodeURIComponent(name)}`;
+}
+
+function checkUrl(host, project, name) {
+  return `#/checks/${[host, project, name].map(encodeURIComponent).join('/')}`;
 }
 
 // Uptime history over the last DAYS days. Days are UTC, matching the agent.
-function history(c) {
+function history(days) {
   const byDate = {};
-  c.days.forEach(d => { byDate[d.date] = d; });
+  days.forEach(d => { byDate[d.date] = d; });
   let checks = 0, failures = 0;
   let ticks = '';
   for (let i = DAYS - 1; i >= 0; i--) {
@@ -562,8 +637,10 @@ function route() {
   const parts = hash.split('/');
   if (hash === 'agents') {
     renderAgents();
-  } else if (parts[0] === 'checks' && parts.length === 3) {
-    renderCheck(decodeURIComponent(parts[1]), decodeURIComponent(parts[2]));
+  } else if (parts[0] === 'projects' && parts.length === 2) {
+    renderProject(decodeURIComponent(parts[1]));
+  } else if (parts[0] === 'checks' && parts.length === 4) {
+    renderCheck(...parts.slice(1).map(decodeURIComponent));
   } else {
     renderOverview();
   }
@@ -586,7 +663,8 @@ function renderAgents() {
       </div>`;
       return;
     }
-    const checks = h.data.checks;
+    const projects = h.data.projects || [];
+    const checks = projects.flatMap(p => p.checks);
     const counts = {};
     checks.forEach(c => { const s = displayState(c); counts[s] = (counts[s] || 0) + 1; });
     const summary = ['up', 'failing', 'down', 'unknown']
@@ -594,7 +672,7 @@ function renderAgents() {
     html += `<div class="row">
       <div class="row-left">
         <div class="row-title"><a href="https://${esc(h.label)}">${esc(h.label)}</a></div>
-        <div class="row-meta">${checks.length} checks · ${esc(summary)} · every ${h.data.poll_interval_secs}s</div>
+        <div class="row-meta">${projects.length} projects · ${checks.length} checks · ${esc(summary)} · every ${h.data.poll_interval_secs}s</div>
       </div>
     </div>`;
   });
@@ -615,28 +693,26 @@ function renderOverview() {
     html += `<div class="load-error">Failed to load <strong>${esc(h.label)}</strong>: ${esc(h.error)}</div>`;
   });
 
-  const allChecks = HOSTS.filter(h => h.data)
-    .flatMap(h => h.data.checks.map(c => ({...c, _host: h.label})));
+  const projects = allProjects();
 
-  const down = allChecks.filter(c => c.state === 'down');
-  if (allChecks.length > 0) {
+  const down = projects.filter(p => projectState(p) === 'down');
+  if (projects.length > 0) {
     const banner = down.length > 0
-      ? `<div class="banner banner-red">${down.length} ${down.length === 1 ? 'check' : 'checks'} down
-          <div class="banner-meta">${down.map(c => esc(c.config.name)).join(', ')}</div></div>`
-      : `<div class="banner banner-green">All checks passing</div>`;
+      ? `<div class="banner banner-red">${down.length} ${down.length === 1 ? 'project' : 'projects'} down
+          <div class="banner-meta">${down.map(p => esc(p.name)).join(', ')}</div></div>`
+      : `<div class="banner banner-green">All projects up</div>`;
     html += banner;
   }
 
-  if (allChecks.length === 0 && failed.length === 0) {
-    html += '<p style="color:var(--muted);">No checks configured.</p>';
-  } else if (allChecks.length > 0) {
+  if (projects.length === 0 && failed.length === 0) {
+    html += '<p style="color:var(--muted);">No projects configured.</p>';
+  } else if (projects.length > 0) {
     const toggle = (label, active, onclick) =>
       `<span class="toggle${active ? ' active' : ''}" onclick="${onclick}">${label}</span>`;
     html += `<div class="controls">
-      <div class="section-label">Checks</div>
+      <div class="section-label">Projects</div>
       <div class="toggles">
         <span>View:
-          ${toggle('Default', viewMode === 'default', "setView('default')")} |
           ${toggle('Status', viewMode === 'status', "setView('status')")} |
           ${toggle('History', viewMode === 'history', "setView('history')")}
         </span>
@@ -646,46 +722,104 @@ function renderOverview() {
         </span>
       </div>
     </div>
-    <input id="filter" type="text" placeholder="Filter checks…" value="${esc(filterText)}"
+    <input id="filter" type="text" placeholder="Filter projects and checks…" value="${esc(filterText)}"
       oninput="setFilter(this.value)">`;
 
     const q = filterText.toLowerCase();
-    const byName = (a, b) => a.config.name.localeCompare(b.config.name);
-    const visible = allChecks
-      .filter(c => c.config.name.toLowerCase().includes(q)
-               || c.config.url.toLowerCase().includes(q)
-               || c._host.toLowerCase().includes(q))
+    const byName = (a, b) => a.name.localeCompare(b.name);
+    const visible = projects
+      .filter(p => p.name.toLowerCase().includes(q)
+               || p.checks.some(c => c.config.name.toLowerCase().includes(q)
+                                  || c.config.url.toLowerCase().includes(q)
+                                  || c._host.toLowerCase().includes(q)))
       .sort(sortAlpha
         ? byName
-        : (a, b) => STATE_ORDER[displayState(a)] - STATE_ORDER[displayState(b)] || byName(a, b));
+        : (a, b) => STATE_ORDER[projectState(a)] - STATE_ORDER[projectState(b)] || byName(a, b));
 
     if (visible.length === 0) {
-      html += `<p style="color:var(--muted);">No checks match.</p>`;
+      html += `<p style="color:var(--muted);">No projects match.</p>`;
     }
     if (visible.length > 0) {
-      html += `<div class="card">${visible.map(c => {
-        const view = viewMode === 'default' ? c.config.view : viewMode;
-        return `<a class="check" href="${esc(checkUrl(c._host, c.config.name))}">
+      html += `<div class="card">${visible.map(p => `<a class="check" href="${esc(projectUrl(p.name))}">
           <div class="check-row">
-            <div class="check-name">${esc(c.config.name)}</div>
-            ${badge(c)}
+            <div class="check-name">${esc(p.name)}</div>
+            ${stateBadge(projectState(p))}
+            <span class="check-count">${esc(projectCount(p))}</span>
           </div>
-          ${view === 'history' ? `<div class="check-history">${history(c)}</div>` : ''}
-        </a>`;
-      }).join('')}</div>`;
+          ${viewMode === 'history' ? `<div class="check-history">${history(projectDays(p))}</div>` : ''}
+        </a>`).join('')}</div>`;
     }
   }
 
   render(html);
 }
 
-function renderCheck(hostLabel, name) {
-  const host = HOSTS.find(h => h.label === hostLabel);
-  if (!host?.data) { renderOverview(); return; }
-  const c = host.data.checks.find(c => c.config.name === name);
-  if (!c) { renderOverview(); return; }
+function incidentRow(i, title, meta) {
+  return `<div class="row">
+    <div>${i.end ? '<span class="badge badge-gray">Resolved</span>' : '<span class="badge badge-red">Ongoing</span>'}</div>
+    <div class="row-left">
+      <div class="row-title">${esc(title)}</div>
+      <div class="row-meta">${esc([formatTime(i.start), `down for ${formatDuration(i.start, i.end)}`, ...meta].join(' · '))}</div>
+    </div>
+  </div>`;
+}
+
+function renderProject(name) {
+  const p = allProjects().find(p => p.name === name);
+  if (!p) { renderOverview(); return; }
+  const multipleHosts = p.parts.length > 1;
 
   let html = breadcrumb([{label: 'Status', href: '#'}, {label: name}]);
+
+  const hosts = p.parts.map(x => `<a href="https://${esc(x.host)}">${esc(x.host)}</a>`).join(', ');
+  html += `<div class="page-title">${esc(name)}</div>
+  <div class="page-subtitle">
+    ${stateBadge(projectState(p))} &nbsp;${esc(projectMeta(p))}<br>
+    Checked from ${hosts}
+  </div>`;
+
+  html += `<div class="section-label">Uptime</div>
+    <div class="card" style="padding:14px 18px;">${history(projectDays(p))}</div>`;
+
+  [...p.parts].sort((a, b) => a.host.localeCompare(b.host)).forEach(({host}) => {
+    const checks = p.checks.filter(c => c._host === host)
+      .sort((a, b) => STATE_ORDER[displayState(a)] - STATE_ORDER[displayState(b)] || a.config.name.localeCompare(b.config.name));
+    html += `<div class="section">
+      <div class="section-label">${multipleHosts ? `Checks from ${esc(host)}` : 'Checks'}</div>
+      <div class="card">${checks.map(c => `<a class="check" href="${esc(checkUrl(host, name, c.config.name))}">
+        <div class="check-row">
+          <div class="check-name">${esc(c.config.name)}</div>
+          ${badge(c)}
+        </div>
+        <div class="check-meta">${esc(stateMeta(c))}</div>
+      </a>`).join('')}</div>
+    </div>`;
+  });
+
+  const incidents = p.checks
+    .flatMap(c => c.incidents.map(i => ({...i, check: c})))
+    .sort((a, b) => new Date(b.start) - new Date(a.start))
+    .slice(0, 20);
+  html += `<div class="section"><div class="section-label">Incidents</div>`;
+  if (incidents.length === 0) {
+    html += `<div class="card empty">No incidents.</div>`;
+  } else {
+    html += `<div class="card">${incidents.map(i =>
+      incidentRow(i, `${i.check.config.name}: ${i.error}`, multipleHosts ? [i.check._host] : [])
+    ).join('')}</div>`;
+  }
+  html += `</div>`;
+
+  render(html);
+}
+
+function renderCheck(hostLabel, projectName, name) {
+  const host = HOSTS.find(h => h.label === hostLabel);
+  const project = host?.data?.projects?.find(p => p.name === projectName);
+  const c = project?.checks.find(c => c.config.name === name);
+  if (!c) { renderOverview(); return; }
+
+  let html = breadcrumb([{label: 'Status', href: '#'}, {label: projectName, href: projectUrl(projectName)}, {label: name}]);
 
   html += `<div class="page-title">${esc(c.config.name)}</div>
   <div class="page-subtitle">
@@ -695,20 +829,13 @@ function renderCheck(hostLabel, name) {
   </div>`;
 
   html += `<div class="section-label">Uptime</div>
-    <div class="card" style="padding:14px 18px;">${history(c)}</div>`;
+    <div class="card" style="padding:14px 18px;">${history(c.days)}</div>`;
 
   html += `<div class="section"><div class="section-label">Incidents</div>`;
   if (c.incidents.length === 0) {
     html += `<div class="card empty">No incidents.</div>`;
   } else {
-    html += `<div class="card">${c.incidents.map(i => `
-      <div class="row">
-        <div>${i.end ? '<span class="badge badge-gray">Resolved</span>' : '<span class="badge badge-red">Ongoing</span>'}</div>
-        <div class="row-left">
-          <div class="row-title">${esc(i.error)}</div>
-          <div class="row-meta">${esc(formatTime(i.start))} · down for ${esc(formatDuration(i.start, i.end))}</div>
-        </div>
-      </div>`).join('')}</div>`;
+    html += `<div class="card">${c.incidents.map(i => incidentRow(i, i.error, [])).join('')}</div>`;
   }
   html += `</div>`;
 

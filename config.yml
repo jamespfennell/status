@@ -1,16 +1,24 @@
 hostname: status.a.jamesfennell.dev
 
-checks:
-- name: subwaydata.nyc
-  url: https://subwaydata.nyc
-- name: hoard2.subwaydata.nyc
-  url: https://hoard2.subwaydata.nyc
-  view: history
-- name: rollouts.jamesfennell.dev
-  url: https://rollouts.jamesfennell.dev
-  contains: Rollouts
-- name: status.b.jamesfennell.dev
-  url: https://status.b.jamesfennell.dev/status.json
+# Optional. Links in emails go to this page; defaults to the agent's own page.
+# ui_url: https://status.jamesfennell.dev
+
+projects:
+- project: subwaydata.nyc
+  checks:
+  - name: subwaydata.nyc
+    url: https://subwaydata.nyc
+  - name: hoard2.subwaydata.nyc
+    url: https://hoard2.subwaydata.nyc
+- project: rollouts
+  checks:
+  - name: rollouts.jamesfennell.dev
+    url: https://rollouts.jamesfennell.dev
+    contains: Rollouts
+- project: status
+  checks:
+  - name: status.b.jamesfennell.dev
+    url: https://status.b.jamesfennell.dev/status.json
 
 # Optional. Without it, emails are logged but not sent.
 # email_config:

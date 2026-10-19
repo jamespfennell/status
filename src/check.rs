@@ -5,6 +5,7 @@ use crate::database;
 use crate::email;
 use crate::metrics;
 use crate::outage;
+use std::collections::BTreeMap;
 use std::sync;
 use std::sync::mpsc;
 use std::thread;
@@ -13,15 +14,23 @@ use std::thread;
 const RESULTS_RETENTION: usize = 100;
 /// Number of incidents retained for each check.
 const INCIDENTS_RETENTION: usize = 20;
-/// Number of days of uptime history retained for each check.
+/// Number of days of uptime history retained for each check and project.
 const DAYS_RETENTION: usize = 90;
 
-const DB_KEY: &str = "check_manager/checks";
-const OUTAGE_DB_KEY: &str = "check_manager/outage";
+const DB_KEY: &str = "check_manager/projects";
+/// Before projects were added, checks were saved under this key by name.
+/// It is only read if there is nothing under `DB_KEY`.
+const LEGACY_DB_KEY: &str = "check_manager/checks";
+/// The outage tracker's state changed format when projects were added, so it moved to a new
+/// key. Any outage open under the old key is dropped.
+const OUTAGE_DB_KEY: &str = "check_manager/project_outage";
+
+type Time = chrono::DateTime<chrono::Utc>;
 
 pub struct Manager<'a> {
     hostname: String,
-    checks: sync::Mutex<Vec<Check>>,
+    ui_url: String,
+    projects: sync::Mutex<Vec<Project>>,
     outage: sync::Mutex<outage::Tracker>,
     db: &'a dyn database::DB,
     notifier: &'a dyn email::Notifier,
@@ -33,33 +42,40 @@ impl<'a> Manager<'a> {
         db: &'a dyn database::DB,
         notifier: &'a dyn email::Notifier,
         hostname: String,
-        checks: Vec<config::CheckConfig>,
+        ui_url: String,
+        projects: Vec<config::ProjectConfig>,
         poll_interval: chrono::Duration,
     ) -> Self {
-        let mut saved: std::collections::BTreeMap<String, Check> =
-            database::get_typed(db, DB_KEY).unwrap().unwrap_or_default();
-        let mut checks: Vec<Check> = checks
+        let saved: Option<BTreeMap<String, serde_json::Value>> =
+            database::get_typed(db, DB_KEY).unwrap();
+        let mut legacy: BTreeMap<String, serde_json::Value> = match saved {
+            Some(_) => Default::default(),
+            None => database::get_typed(db, LEGACY_DB_KEY)
+                .unwrap()
+                .unwrap_or_default(),
+        };
+        let mut saved = saved.unwrap_or_default();
+        let mut projects: Vec<Project> = projects
             .into_iter()
-            .map(|check_config| match saved.remove(&check_config.name) {
-                None => Check::new(check_config),
-                Some(mut check) => {
-                    check.config = check_config;
-                    check
-                }
+            .map(|config| {
+                let saved = saved.remove(&config.project);
+                Project::restore(config, saved, &mut legacy)
             })
             .collect();
-        checks.sort_by_key(|c| c.config.name.clone());
+        projects.sort_by_key(|p| p.name.clone());
         let m = metrics::get();
-        m.checks_configured.set(checks.len() as i64);
-        for check in &checks {
-            check.init_metrics();
+        m.checks_configured
+            .set(projects.iter().map(|p| p.checks.len()).sum::<usize>() as i64);
+        for project in &projects {
+            project.init_metrics();
         }
         let outage = database::get_typed(db, OUTAGE_DB_KEY)
             .unwrap()
             .unwrap_or_default();
         Self {
             hostname,
-            checks: sync::Mutex::new(checks),
+            ui_url,
+            projects: sync::Mutex::new(projects),
             outage: sync::Mutex::new(outage),
             db,
             notifier,
@@ -73,8 +89,8 @@ impl<'a> Manager<'a> {
         });
         Stopper { tx }
     }
-    pub fn checks(&self) -> Vec<Check> {
-        (*self.checks.lock().unwrap()).clone()
+    pub fn projects(&self) -> Vec<Project> {
+        (*self.projects.lock().unwrap()).clone()
     }
     pub fn poll_interval(&self) -> chrono::Duration {
         self.poll_interval
@@ -99,51 +115,67 @@ impl<'a> Manager<'a> {
         loop {
             let start = chrono::Utc::now();
 
-            let mut checks = (*self.checks.lock().unwrap()).clone();
+            let mut projects = (*self.projects.lock().unwrap()).clone();
             // All checks run in parallel so that one slow URL doesn't delay the others.
             // Each check is bounded by its timeout.
-            let results: Vec<(CheckResult, &str)> = thread::scope(|s| {
-                let handles: Vec<_> = checks
+            let results: Vec<Vec<(CheckResult, &str)>> = thread::scope(|s| {
+                let handles: Vec<Vec<_>> = projects
                     .iter()
-                    .map(|check| s.spawn(|| probe(&check.config, &self.hostname)))
+                    .map(|project| {
+                        project
+                            .checks
+                            .iter()
+                            .map(|check| s.spawn(|| probe(&check.config, &self.hostname)))
+                            .collect()
+                    })
                     .collect();
-                handles.into_iter().map(|h| h.join().unwrap()).collect()
+                handles
+                    .into_iter()
+                    .map(|handles| handles.into_iter().map(|h| h.join().unwrap()).collect())
+                    .collect()
             });
+            let now = chrono::Utc::now();
             let m = metrics::get();
-            for (check, (result, result_label)) in checks.iter_mut().zip(results) {
-                let name = check.config.name.clone();
-                let name = name.as_str();
-                m.checks.with_label_values(&[name, result_label]).inc();
-                m.check_duration
-                    .with_label_values(&[name])
-                    .observe(result.latency_ms as f64 / 1000.0);
-                if !result.success {
-                    eprintln!(
-                        "[{}] check failed: {}",
-                        check.config.name,
-                        result.error.as_deref().unwrap_or("unknown error")
-                    );
+            for (project, results) in projects.iter_mut().zip(results) {
+                let project_name = project.name.clone();
+                for (check, (result, result_label)) in project.checks.iter_mut().zip(results) {
+                    let name = check.config.name.clone();
+                    let labels = [project_name.as_str(), name.as_str()];
+                    m.checks
+                        .with_label_values(&[labels[0], labels[1], result_label])
+                        .inc();
+                    m.check_duration
+                        .with_label_values(&labels)
+                        .observe(result.latency_ms as f64 / 1000.0);
+                    if !result.success {
+                        eprintln!(
+                            "[{project_name}/{name}] check failed: {}",
+                            result.error.as_deref().unwrap_or("unknown error")
+                        );
+                    }
+                    if check.record(result) == Some(Transition::Down) {
+                        m.incidents.with_label_values(&labels).inc();
+                    }
+                    check.update_state_metrics(&project_name);
                 }
-                if check.record(result) == Some(Transition::Down) {
-                    m.incidents.with_label_values(&[name]).inc();
-                }
-                check.update_state_metrics();
+                project.record(now);
+                project.update_state_metrics();
             }
-            // Emails are sent per outage rather than per check, so that a whole node going
+            // Emails are sent per outage rather than per project, so that a whole node going
             // down results in one email thread.
-            let down = checks.iter().filter_map(Check::down).collect();
+            let down = projects.iter().filter_map(Project::down).collect();
             let mut outage = self.outage.lock().unwrap();
-            if let Some(email) = outage.update(&self.hostname, chrono::Utc::now(), down) {
+            if let Some(email) = outage.update(&self.hostname, &self.ui_url, now, down) {
                 self.notifier.notify(&email);
             }
             database::set_typed(self.db, OUTAGE_DB_KEY.into(), &*outage).unwrap();
             drop(outage);
-            let saved: std::collections::BTreeMap<&str, &Check> = checks
+            let saved: BTreeMap<&str, &Project> = projects
                 .iter()
-                .map(|check| (check.config.name.as_str(), check))
+                .map(|project| (project.name.as_str(), project))
                 .collect();
             database::set_typed(self.db, DB_KEY.into(), &saved).unwrap();
-            *self.checks.lock().unwrap() = checks;
+            *self.projects.lock().unwrap() = projects;
 
             let end = chrono::Utc::now();
             let loop_duration = end - start;
@@ -286,16 +318,162 @@ pub enum State {
     Down,
 }
 
+/// A project and its checks.
+///
+/// The project is down if any of its checks are down, and up if none are down and at least
+/// one is up.
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
+pub struct Project {
+    name: String,
+    state: State,
+    /// When the current state started. For the down state this is the time of the first
+    /// failed check of the check that went down first.
+    since: Option<Time>,
+    /// Most recent first. A poll of the project fails if any of its checks fail.
+    days: Vec<Day>,
+    checks: Vec<Check>,
+}
+
+impl Project {
+    fn new(name: String) -> Self {
+        Self {
+            name,
+            state: State::Unknown,
+            since: None,
+            days: vec![],
+            checks: vec![],
+        }
+    }
+
+    /// Restores the project from its saved state, keeping the history of any checks that
+    /// are still configured. Checks are matched by name, first within the saved project and
+    /// then in the legacy checks that were saved before projects were added.
+    ///
+    /// Saved state that can't be read is dropped, so changes to the config format don't
+    /// lose history.
+    fn restore(
+        config: config::ProjectConfig,
+        saved: Option<serde_json::Value>,
+        legacy: &mut BTreeMap<String, serde_json::Value>,
+    ) -> Self {
+        let mut saved = saved.unwrap_or_default();
+        let mut saved_checks: BTreeMap<String, serde_json::Value> =
+            match saved.get_mut("checks").map(serde_json::Value::take) {
+                Some(serde_json::Value::Array(checks)) => checks
+                    .into_iter()
+                    .filter_map(|check| {
+                        let name = check.get("config")?.get("name")?.as_str()?.to_string();
+                        Some((name, check))
+                    })
+                    .collect(),
+                _ => Default::default(),
+            };
+        saved["name"] = config.project.clone().into();
+        saved["checks"] = serde_json::Value::Array(vec![]);
+        let mut project: Project =
+            serde_json::from_value(saved).unwrap_or_else(|_| Project::new(config.project));
+        project.checks = config
+            .checks
+            .into_iter()
+            .map(|check_config| {
+                let saved = saved_checks
+                    .remove(&check_config.name)
+                    .or_else(|| legacy.remove(&check_config.name));
+                Check::restore(check_config, saved)
+            })
+            .collect();
+        project
+    }
+
+    /// Creates this project's metrics and those of its checks.
+    fn init_metrics(&self) {
+        for check in &self.checks {
+            check.init_metrics(&self.name);
+        }
+        self.update_state_metrics();
+    }
+
+    fn update_state_metrics(&self) {
+        let m = metrics::get();
+        let name = self.name.as_str();
+        match self.state {
+            State::Up => m.project_up.with_label_values(&[name]).set(1),
+            State::Down => m.project_up.with_label_values(&[name]).set(0),
+            State::Unknown => {
+                let _ = m.project_up.remove_label_values(&[name]);
+            }
+        }
+    }
+
+    /// Updates the state and history of the project after its checks have been recorded.
+    fn record(&mut self, now: Time) {
+        let date = now.date_naive();
+        if self.days.first().map(|day| day.date) != Some(date) {
+            self.days.insert(0, Day::new(date));
+            self.days.truncate(DAYS_RETENTION);
+        }
+        self.days[0].checks += 1;
+        if self.checks.iter().any(|c| c.consecutive_failures > 0) {
+            self.days[0].failures += 1;
+        }
+        let states: Vec<State> = self.checks.iter().map(|c| c.state).collect();
+        let state = if states.contains(&State::Down) {
+            State::Down
+        } else if states.contains(&State::Up) {
+            State::Up
+        } else {
+            State::Unknown
+        };
+        if state != self.state {
+            self.state = state;
+            self.since = match state {
+                State::Down => self.down_checks().filter_map(|c| c.since).min(),
+                State::Up | State::Unknown => Some(now),
+            };
+        }
+        if self.state == State::Down {
+            self.days[0].down = true;
+        }
+    }
+
+    fn down_checks(&self) -> impl Iterator<Item = &Check> {
+        self.checks.iter().filter(|c| c.state == State::Down)
+    }
+
+    /// Returns details of the project if it is down.
+    fn down(&self) -> Option<outage::Down> {
+        if self.state != State::Down {
+            return None;
+        }
+        let down: Vec<&Check> = self.down_checks().collect();
+        let n = self.checks.len();
+        let summary = match down.as_slice() {
+            [check] if n == 1 => check.error().to_string(),
+            [check] => format!(
+                "{}: {} (1 of {n} checks down)",
+                check.config.name,
+                check.error()
+            ),
+            _ => format!("{} of {n} checks down", down.len()),
+        };
+        Some(outage::Down {
+            name: self.name.clone(),
+            since: self.since?,
+            summary,
+        })
+    }
+}
+
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub struct Check {
     config: config::CheckConfig,
     state: State,
     /// When the current state started. For the down state this is the time of the first
     /// failed check, not the time the failure threshold was reached.
-    since: Option<chrono::DateTime<chrono::Utc>>,
+    since: Option<Time>,
     consecutive_failures: u32,
     /// Time of the first of the current consecutive failures.
-    failing_since: Option<chrono::DateTime<chrono::Utc>>,
+    failing_since: Option<Time>,
     /// Most recent first.
     results: Vec<CheckResult>,
     /// Most recent first.
@@ -332,6 +510,17 @@ struct Day {
     down: bool,
 }
 
+impl Day {
+    fn new(date: chrono::NaiveDate) -> Self {
+        Self {
+            date,
+            checks: 0,
+            failures: 0,
+            down: false,
+        }
+    }
+}
+
 #[derive(Debug, PartialEq)]
 enum Transition {
     Down,
@@ -352,46 +541,61 @@ impl Check {
         }
     }
 
+    /// Restores the check from its saved state, using the given config rather than the
+    /// saved one. Saved state that can't be read is dropped.
+    fn restore(config: config::CheckConfig, saved: Option<serde_json::Value>) -> Self {
+        let Some(mut saved) = saved else {
+            return Check::new(config);
+        };
+        saved["config"] = serde_json::to_value(&config).unwrap();
+        match serde_json::from_value(saved) {
+            Ok(check) => check,
+            Err(err) => {
+                eprintln!(
+                    "[check_manager] dropping unreadable saved state for check {:?}: {err}",
+                    config.name
+                );
+                Check::new(config)
+            }
+        }
+    }
+
     /// Creates this check's metrics so that counters start at zero, and sets the gauges
     /// from state loaded from the database.
-    fn init_metrics(&self) {
+    fn init_metrics(&self, project: &str) {
         let m = metrics::get();
         let name = self.config.name.as_str();
         for result in metrics::CHECK_RESULTS {
-            m.checks.with_label_values(&[name, result]);
+            m.checks.with_label_values(&[project, name, result]);
         }
-        m.incidents.with_label_values(&[name]);
-        self.update_state_metrics();
+        m.incidents.with_label_values(&[project, name]);
+        self.update_state_metrics(project);
     }
 
-    fn update_state_metrics(&self) {
+    fn update_state_metrics(&self, project: &str) {
         let m = metrics::get();
-        let name = self.config.name.as_str();
+        let labels = [project, self.config.name.as_str()];
         match self.state {
-            State::Up => m.check_up.with_label_values(&[name]).set(1),
-            State::Down => m.check_up.with_label_values(&[name]).set(0),
+            State::Up => m.check_up.with_label_values(&labels).set(1),
+            State::Down => m.check_up.with_label_values(&labels).set(0),
             State::Unknown => {
-                let _ = m.check_up.remove_label_values(&[name]);
+                let _ = m.check_up.remove_label_values(&labels);
             }
         }
         m.check_consecutive_failures
-            .with_label_values(&[name])
+            .with_label_values(&labels)
             .set(self.consecutive_failures as i64);
         if let Some(since) = self.since {
-            metrics::set_timestamp(&m.check_state_since.with_label_values(&[name]), since);
+            metrics::set_timestamp(&m.check_state_since.with_label_values(&labels), since);
         }
     }
 
-    /// Returns details of the check if it is down.
-    fn down(&self) -> Option<outage::Down> {
-        if self.state != State::Down {
-            return None;
-        }
-        Some(outage::Down {
-            name: self.config.name.clone(),
-            since: self.since?,
-            error: self.incidents.first()?.error.clone(),
-        })
+    /// Error from the check that reached the failure threshold in the latest incident.
+    fn error(&self) -> &str {
+        self.incidents
+            .first()
+            .map(|incident| incident.error.as_str())
+            .unwrap_or_default()
     }
 
     /// Records the result of a check, returning the transition if the state changed
@@ -400,15 +604,7 @@ impl Check {
         let now = result.time;
         let date = now.date_naive();
         if self.days.first().map(|day| day.date) != Some(date) {
-            self.days.insert(
-                0,
-                Day {
-                    date,
-                    checks: 0,
-                    failures: 0,
-                    down: false,
-                },
-            );
+            self.days.insert(0, Day::new(date));
             self.days.truncate(DAYS_RETENTION);
         }
         self.days[0].checks += 1;
@@ -472,7 +668,6 @@ mod tests {
         Check::new(config::CheckConfig {
             name: "test".into(),
             url: "https://example.com".into(),
-            view: config::View::Status,
             skip_body: false,
             expected_status: None,
             contains: None,
@@ -584,5 +779,125 @@ mod tests {
         }
         assert_eq!(check.days.len(), DAYS_RETENTION);
         assert_eq!(check.results.len(), RESULTS_RETENTION);
+    }
+
+    fn new_project(names: &[&str]) -> Project {
+        let mut project = Project::new("project".into());
+        project.checks = names
+            .iter()
+            .map(|name| {
+                let mut check = new_check(1);
+                check.config.name = name.to_string();
+                check
+            })
+            .collect();
+        project
+    }
+
+    /// Records a result for each check in the project, given whether each passed.
+    fn record_project(project: &mut Project, minute: i64, success: &[bool]) {
+        for (check, success) in project.checks.iter_mut().zip(success) {
+            check.record(result(minute, *success));
+        }
+        project.record(time(minute));
+    }
+
+    #[test]
+    fn project_state() {
+        let mut project = new_project(&["a", "b", "c"]);
+        project.record(time(0));
+        assert_eq!(project.state, State::Unknown);
+        assert!(project.down().is_none());
+
+        // Checks that are still unknown don't stop the project being up.
+        project.checks[0].record(result(1, true));
+        project.record(time(1));
+        assert_eq!(project.state, State::Up);
+        assert_eq!(project.since, Some(time(1)));
+
+        record_project(&mut project, 2, &[true, false, true]);
+        assert_eq!(project.state, State::Down);
+        assert_eq!(project.since, Some(time(2)));
+        let down = project.down().unwrap();
+        assert_eq!(down.since, time(2));
+        assert_eq!(down.summary, "b: HTTP 502 (1 of 3 checks down)");
+
+        // Another check going down doesn't change when the project went down.
+        record_project(&mut project, 3, &[false, false, true]);
+        assert_eq!(project.since, Some(time(2)));
+        assert_eq!(project.down().unwrap().summary, "2 of 3 checks down");
+
+        record_project(&mut project, 4, &[true, true, true]);
+        assert_eq!(project.state, State::Up);
+        assert_eq!(project.since, Some(time(4)));
+
+        let today = &project.days[0];
+        assert_eq!((today.checks, today.failures, today.down), (5, 2, true));
+    }
+
+    #[test]
+    fn single_check_project_summary() {
+        let mut project = new_project(&["a"]);
+        record_project(&mut project, 0, &[false]);
+        assert_eq!(project.down().unwrap().summary, "HTTP 502");
+    }
+
+    #[test]
+    fn restore() {
+        let mut project = new_project(&["a", "b"]);
+        record_project(&mut project, 0, &[true, false]);
+        let saved = serde_json::to_value(&project).unwrap();
+        let mut legacy_check = new_check(1);
+        legacy_check.record(result(0, false));
+        let mut legacy = BTreeMap::from([(
+            "legacy".to_string(),
+            serde_json::to_value(&legacy_check).unwrap(),
+        )]);
+        let config = |name: &str| {
+            let mut check = new_check(5).config;
+            check.name = name.into();
+            check
+        };
+
+        let restored = Project::restore(
+            config::ProjectConfig {
+                project: "project".into(),
+                checks: vec![config("b"), config("legacy"), config("new")],
+            },
+            Some(saved),
+            &mut legacy,
+        );
+
+        assert_eq!(restored.state, State::Down);
+        assert_eq!(restored.days.len(), 1);
+        let names: Vec<&str> = restored
+            .checks
+            .iter()
+            .map(|c| c.config.name.as_str())
+            .collect();
+        assert_eq!(names, vec!["b", "legacy", "new"]);
+        // The config comes from the new config file, not the saved state.
+        assert_eq!(restored.checks[0].config.failure_threshold, 5);
+        assert_eq!(restored.checks[0].state, State::Down);
+        assert_eq!(restored.checks[1].state, State::Down);
+        assert_eq!(restored.checks[2].state, State::Unknown);
+        assert!(legacy.is_empty());
+    }
+
+    #[test]
+    fn restore_unreadable() {
+        let mut legacy = BTreeMap::new();
+        let restored = Project::restore(
+            config::ProjectConfig {
+                project: "project".into(),
+                checks: vec![new_check(1).config],
+            },
+            Some(
+                serde_json::json!({"state": "sideways", "checks": [{"config": {"name": "test"}}]}),
+            ),
+            &mut legacy,
+        );
+        assert_eq!(restored.state, State::Unknown);
+        assert_eq!(restored.checks[0].state, State::Unknown);
     }
 }

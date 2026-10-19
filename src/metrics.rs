@@ -23,6 +23,7 @@ pub const CHECK_RESULTS: [&str; 7] = [
 pub struct Metrics {
     registry: Registry,
 
+    pub project_up: IntGaugeVec,
     pub check_up: IntGaugeVec,
     pub checks: IntCounterVec,
     pub check_duration: HistogramVec,
@@ -48,12 +49,20 @@ impl Metrics {
     fn new() -> Self {
         let registry = Registry::new();
         let m = Self {
+            project_up: IntGaugeVec::new(
+                Opts::new(
+                    "status_project_up",
+                    "1 if the project is up, 0 if any of its checks are down. Absent while the state is unknown.",
+                ),
+                &["project"],
+            )
+            .unwrap(),
             check_up: IntGaugeVec::new(
                 Opts::new(
                     "status_check_up",
                     "1 if the check is up, 0 if it is down. Absent while the state is unknown.",
                 ),
-                &["check"],
+                &["project", "check"],
             )
             .unwrap(),
             checks: IntCounterVec::new(
@@ -61,7 +70,7 @@ impl Metrics {
                     "status_checks_total",
                     "Checks run, by result (success, http_status, content, timeout, dns, connection, other).",
                 ),
-                &["check", "result"],
+                &["project", "check", "result"],
             )
             .unwrap(),
             check_duration: HistogramVec::new(
@@ -72,7 +81,7 @@ impl Metrics {
                 .buckets(vec![
                     0.05, 0.1, 0.2, 0.3, 0.5, 0.75, 1.0, 2.0, 5.0, 10.0,
                 ]),
-                &["check"],
+                &["project", "check"],
             )
             .unwrap(),
             check_consecutive_failures: IntGaugeVec::new(
@@ -80,7 +89,7 @@ impl Metrics {
                     "status_check_consecutive_failures",
                     "Number of consecutive failed checks; 0 if the last check passed.",
                 ),
-                &["check"],
+                &["project", "check"],
             )
             .unwrap(),
             incidents: IntCounterVec::new(
@@ -88,7 +97,7 @@ impl Metrics {
                     "status_incidents_total",
                     "Times the check went down (reached its failure threshold).",
                 ),
-                &["check"],
+                &["project", "check"],
             )
             .unwrap(),
             check_state_since: prometheus::GaugeVec::new(
@@ -96,7 +105,7 @@ impl Metrics {
                     "status_check_state_since_timestamp_seconds",
                     "Unix time at which the current up or down state started.",
                 ),
-                &["check"],
+                &["project", "check"],
             )
             .unwrap(),
 
@@ -138,6 +147,7 @@ impl Metrics {
             registry,
         };
         let collectors: Vec<Box<dyn prometheus::core::Collector>> = vec![
+            Box::new(m.project_up.clone()),
             Box::new(m.check_up.clone()),
             Box::new(m.checks.clone()),
             Box::new(m.check_duration.clone()),

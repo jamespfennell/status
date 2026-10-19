@@ -92,8 +92,13 @@ impl Cli {
             .ok_or("config is required in agent mode")?;
         let config = config::load(config_path)?;
         eprintln!(
-            "[main] loaded the configuration containing {} checks",
-            config.checks.len()
+            "[main] loaded the configuration containing {} projects and {} checks",
+            config.projects.len(),
+            config
+                .projects
+                .iter()
+                .map(|p| p.checks.len())
+                .sum::<usize>()
         );
 
         let poll_interval = chrono::Duration::seconds(match self.poll_interval_secs {
@@ -102,6 +107,7 @@ impl Cli {
         });
         eprintln!("[main] using the following poll interval: {poll_interval:?}");
 
+        let ui_url = config.ui_url();
         let notifier: Box<dyn email::Notifier> = match config.email_config {
             None => Box::new(email::NoOpNotifier {}),
             Some(config) => Box::new(email::Client::new(config)),
@@ -119,7 +125,8 @@ impl Cli {
             db.as_ref(),
             notifier.as_ref(),
             config.hostname.clone(),
-            config.checks,
+            ui_url,
+            config.projects,
             poll_interval,
         );
         let http_service = http::Service::new(config.hostname.clone(), &check_manager);

@@ -27,8 +27,12 @@ const OUTAGE_DB_KEY: &str = "check_manager/project_outage";
 
 type Time = chrono::DateTime<chrono::Utc>;
 
+/// Response header set by the frontends naming the node that served the response.
+const NODE_HEADER: &str = "X-JamesFennell-Node";
+
 pub struct Manager<'a> {
     hostname: String,
+    node: Option<String>,
     ui_url: String,
     projects: sync::Mutex<Vec<Project>>,
     outage: sync::Mutex<outage::Tracker>,
@@ -42,6 +46,7 @@ impl<'a> Manager<'a> {
         db: &'a dyn database::DB,
         notifier: &'a dyn email::Notifier,
         hostname: String,
+        node: Option<String>,
         ui_url: String,
         projects: Vec<config::ProjectConfig>,
         poll_interval: chrono::Duration,
@@ -74,6 +79,7 @@ impl<'a> Manager<'a> {
             .unwrap_or_default();
         Self {
             hostname,
+            node,
             ui_url,
             projects: sync::Mutex::new(projects),
             outage: sync::Mutex::new(outage),
@@ -125,7 +131,11 @@ impl<'a> Manager<'a> {
                         project
                             .checks
                             .iter()
-                            .map(|check| s.spawn(|| probe(&check.config, &self.hostname)))
+                            .map(|check| {
+                                s.spawn(|| {
+                                    probe(&check.config, &self.hostname, self.node.as_deref())
+                                })
+                            })
                             .collect()
                     })
                     .collect();
@@ -205,8 +215,15 @@ impl<'a> Manager<'a> {
 
 /// Requests the URL in the check config and determines whether the check passed.
 ///
+/// If `node` is set, the check fails if the response says it was served by that node, or
+/// doesn't say which node served it (unless the check allows that).
+///
 /// Also returns the result label for the `status_checks_total` metric.
-fn probe(config: &config::CheckConfig, hostname: &str) -> (CheckResult, &'static str) {
+fn probe(
+    config: &config::CheckConfig,
+    hostname: &str,
+    node: Option<&str>,
+) -> (CheckResult, &'static str) {
     let time = chrono::Utc::now();
     let agent = ureq::AgentBuilder::new()
         .timeout(std::time::Duration::from_secs(config.timeout_secs))
@@ -243,12 +260,24 @@ fn probe(config: &config::CheckConfig, hostname: &str) -> (CheckResult, &'static
                 None => (200..300).contains(&status),
                 Some(expected) => status == expected,
             };
-            let error = if !status_ok {
+            // After redirects, this is the header of the final response.
+            let served_by = response.header(NODE_HEADER);
+            let error = if let Some(node) = node.filter(|node| served_by == Some(*node)) {
+                Some((
+                    format!("served by node {node}, the same node as this agent"),
+                    "same_node",
+                ))
+            } else if !status_ok {
                 let message = match config.expected_status {
                     None => format!("HTTP {status}"),
                     Some(expected) => format!("HTTP {status} (expected {expected})"),
                 };
                 Some((message, "http_status"))
+            } else if node.is_some() && served_by.is_none() && !config.allow_missing_node_header {
+                Some((
+                    format!("response has no {NODE_HEADER} header"),
+                    "missing_node_header",
+                ))
             } else if let Some(contains) = &config.contains {
                 match response.into_string() {
                     Err(err) => {
@@ -669,6 +698,7 @@ mod tests {
             name: "test".into(),
             url: "https://example.com".into(),
             skip_body: false,
+            allow_missing_node_header: false,
             expected_status: None,
             contains: None,
             timeout_secs: 10,
@@ -899,5 +929,90 @@ mod tests {
         );
         assert_eq!(restored.state, State::Unknown);
         assert_eq!(restored.checks[0].state, State::Unknown);
+    }
+
+    /// Serves 200 responses on a local port, with the node header if `node` is set,
+    /// and returns a check config for it.
+    fn local_server(node: Option<&str>) -> config::CheckConfig {
+        let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
+        let port = server.server_addr().to_ip().unwrap().port();
+        let header = node.map(|node| {
+            tiny_http::Header::from_bytes(NODE_HEADER.as_bytes(), node.as_bytes()).unwrap()
+        });
+        std::thread::spawn(move || {
+            for request in server.incoming_requests() {
+                let mut response = tiny_http::Response::from_string("ok");
+                if let Some(header) = &header {
+                    response.add_header(header.clone());
+                }
+                let _ = request.respond(response);
+            }
+        });
+        config::CheckConfig {
+            url: format!("http://127.0.0.1:{port}"),
+            ..new_check(1).config
+        }
+    }
+
+    #[test]
+    fn probe_same_node() {
+        let config = local_server(Some("a"));
+        let (result, label) = probe(&config, "test", Some("a"));
+        assert_eq!(label, "same_node");
+        assert!(!result.success);
+        assert_eq!(
+            result.error.as_deref(),
+            Some("served by node a, the same node as this agent")
+        );
+    }
+
+    #[test]
+    fn probe_other_node() {
+        let config = local_server(Some("b"));
+        let (result, label) = probe(&config, "test", Some("a"));
+        assert_eq!(label, "success");
+        assert!(result.success);
+    }
+
+    #[test]
+    fn probe_no_header() {
+        let config = local_server(None);
+        let (result, label) = probe(&config, "test", Some("a"));
+        assert_eq!(label, "missing_node_header");
+        assert!(!result.success);
+        assert_eq!(
+            result.error.as_deref(),
+            Some("response has no X-JamesFennell-Node header")
+        );
+    }
+
+    #[test]
+    fn probe_no_header_allowed() {
+        let config = config::CheckConfig {
+            allow_missing_node_header: true,
+            ..local_server(None)
+        };
+        let (result, label) = probe(&config, "test", Some("a"));
+        assert_eq!(label, "success");
+        assert!(result.success);
+    }
+
+    #[test]
+    fn probe_same_node_allowed_missing() {
+        // Allowing a missing header doesn't allow the agent's own node.
+        let config = config::CheckConfig {
+            allow_missing_node_header: true,
+            ..local_server(Some("a"))
+        };
+        let (_, label) = probe(&config, "test", Some("a"));
+        assert_eq!(label, "same_node");
+    }
+
+    #[test]
+    fn probe_node_not_configured() {
+        let config = local_server(Some("a"));
+        let (result, label) = probe(&config, "test", None);
+        assert_eq!(label, "success");
+        assert!(result.success);
     }
 }

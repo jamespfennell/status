@@ -10,8 +10,10 @@ use prometheus::{
 };
 
 /// Values of the `result` label of `status_checks_total`.
-pub const CHECK_RESULTS: [&str; 7] = [
+pub const CHECK_RESULTS: [&str; 9] = [
     "success",
+    "same_node",
+    "missing_node_header",
     "http_status",
     "content",
     "timeout",
@@ -68,7 +70,7 @@ impl Metrics {
             checks: IntCounterVec::new(
                 Opts::new(
                     "status_checks_total",
-                    "Checks run, by result (success, http_status, content, timeout, dns, connection, other).",
+                    "Checks run, by result (success, same_node, missing_node_header, http_status, content, timeout, dns, connection, other).",
                 ),
                 &["project", "check", "result"],
             )

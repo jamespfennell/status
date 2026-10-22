@@ -17,6 +17,15 @@ pub struct Config {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ui_url: Option<String>,
 
+    /// Name of the node the agent is running on; e.g. a.
+    ///
+    /// If set, a check fails if its response has an `X-JamesFennell-Node` header naming
+    /// this node, or has no such header (see `allow_missing_node_header`). The agent should
+    /// check projects on other nodes, so that it notices a node going down; this catches a
+    /// project being migrated to the agent's own node.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub node: Option<String>,
+
     /// Projects to check.
     #[serde(default)]
     pub projects: Vec<ProjectConfig>,
@@ -61,6 +70,13 @@ pub struct CheckConfig {
     /// It can't be used with `contains`.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub skip_body: bool,
+
+    /// Pass even if the response has no `X-JamesFennell-Node` header; defaults to false.
+    ///
+    /// Useful for URLs that aren't served by our frontends, such as redirects to a CDN.
+    /// The check still fails if the header names the agent's own node.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub allow_missing_node_header: bool,
 
     /// HTTP status code the response must have.
     ///

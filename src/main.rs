@@ -125,6 +125,7 @@ impl Cli {
             db.as_ref(),
             notifier.as_ref(),
             config.hostname.clone(),
+            config.node.clone(),
             ui_url,
             config.projects,
             poll_interval,

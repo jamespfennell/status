@@ -6,6 +6,12 @@ The agent periodically requests a list of URLs, which are grouped into projects.
 If a URL fails a number of consecutive checks it is considered down.
 A project is down if any of its checks are down.
 
+The agent is meant to check projects on other nodes, so that it notices a node going down.
+If the agent's `node` is set in the config, a check fails if the response's
+    `X-JamesFennell-Node` header names that node, or if the header is missing.
+Checks of URLs not served by our frontends can set `allow_missing_node_header`.
+This catches a project being migrated to the node of the agent that checks it.
+
 When a project goes down the agent sends an email.
 Projects that are down at the same time are grouped into one outage
     with a single email thread,

@@ -17,7 +17,7 @@ pub struct Config {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ui_url: Option<String>,
 
-    /// Name of the node the agent is running on; e.g. a.
+    /// Name of the node the agent is running on; e.g. a.jamesfennell.dev.
     ///
     /// If set, a check fails if its response has an `X-JamesFennell-Node` header naming
     /// this node, or has no such header (see `allow_missing_node_header`). The agent should

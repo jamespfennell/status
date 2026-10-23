@@ -956,20 +956,20 @@ mod tests {
 
     #[test]
     fn probe_same_node() {
-        let config = local_server(Some("a"));
-        let (result, label) = probe(&config, "test", Some("a"));
+        let config = local_server(Some("a.jamesfennell.dev"));
+        let (result, label) = probe(&config, "test", Some("a.jamesfennell.dev"));
         assert_eq!(label, "same_node");
         assert!(!result.success);
         assert_eq!(
             result.error.as_deref(),
-            Some("served by node a, the same node as this agent")
+            Some("served by node a.jamesfennell.dev, the same node as this agent")
         );
     }
 
     #[test]
     fn probe_other_node() {
-        let config = local_server(Some("b"));
-        let (result, label) = probe(&config, "test", Some("a"));
+        let config = local_server(Some("b.jamesfennell.dev"));
+        let (result, label) = probe(&config, "test", Some("a.jamesfennell.dev"));
         assert_eq!(label, "success");
         assert!(result.success);
     }
@@ -977,7 +977,7 @@ mod tests {
     #[test]
     fn probe_no_header() {
         let config = local_server(None);
-        let (result, label) = probe(&config, "test", Some("a"));
+        let (result, label) = probe(&config, "test", Some("a.jamesfennell.dev"));
         assert_eq!(label, "missing_node_header");
         assert!(!result.success);
         assert_eq!(
@@ -992,7 +992,7 @@ mod tests {
             allow_missing_node_header: true,
             ..local_server(None)
         };
-        let (result, label) = probe(&config, "test", Some("a"));
+        let (result, label) = probe(&config, "test", Some("a.jamesfennell.dev"));
         assert_eq!(label, "success");
         assert!(result.success);
     }
@@ -1002,15 +1002,15 @@ mod tests {
         // Allowing a missing header doesn't allow the agent's own node.
         let config = config::CheckConfig {
             allow_missing_node_header: true,
-            ..local_server(Some("a"))
+            ..local_server(Some("a.jamesfennell.dev"))
         };
-        let (_, label) = probe(&config, "test", Some("a"));
+        let (_, label) = probe(&config, "test", Some("a.jamesfennell.dev"));
         assert_eq!(label, "same_node");
     }
 
     #[test]
     fn probe_node_not_configured() {
-        let config = local_server(Some("a"));
+        let config = local_server(Some("a.jamesfennell.dev"));
         let (result, label) = probe(&config, "test", None);
         assert_eq!(label, "success");
         assert!(result.success);

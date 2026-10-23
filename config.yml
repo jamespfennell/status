@@ -1,7 +1,7 @@
 hostname: status.a.jamesfennell.dev
 
 # Optional. Checks fail if the response's X-JamesFennell-Node header names this node.
-# node: a
+# node: a.jamesfennell.dev
 
 # Optional. Links in emails go to this page; defaults to the agent's own page.
 # ui_url: https://status.jamesfennell.dev
